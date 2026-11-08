@@ -22,6 +22,8 @@
 
 ## 快速开始
 
+完整步骤（前置条件、验证、首次录入、反代、升级回滚、故障排查）见 **[DEPLOY.md](DEPLOY.md)**。最短路径：
+
 ```bash
 cp .env.example .env            # 填 EXAM_AUTH_PASS / HS_PLAN_API_KEY / KB_API_KEY
 mkdir -p data/kb data/solver
@@ -35,7 +37,8 @@ docker compose up -d --build
 
 ## 模型配置
 
-- **答题模型**：登录答题页 → 「⚙️ 模型配置」卡 → 添加（名称/调用地址/Key/模型名/用途），可存多条一键切换；不添加则回落到 env 的 `HS_PLAN_API_KEY` + Ark plan 端点。OCR 识图模型同样在该卡配置。
+- **答题模型**：登录答题页 → 「⚙️ 模型配置」卡 → 添加（名称/调用地址/Key/模型名/用途），可存多条一键切换；不添加则回落到 env 的 `HS_PLAN_API_KEY` + Ark plan 端点。
+- **OCR 识图模型**：同卡的 `ocr` 用途条目，但 ocr-service 读 `/shared/llm_models.json` 而 compose 未挂载该目录，**当前以 `.env` 的 `HS_PLAN_API_KEY`/`OCR_MODEL` 生效**（修法见 DEPLOY.md「模型配置」）。
 - **向量模型**：kb 的 `data/kb/config.json`（`embed_url` / `embed_token` / `embed_model` / `embed_dims`）。⚠️ 换模型或维度 = 该库全部向量作废重建。
 
 ## 数据与升级
