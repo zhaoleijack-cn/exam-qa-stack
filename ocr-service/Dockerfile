@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM python:3.12-slim-bookworm
 
 ARG PIP_INDEX=https://pypi.org/simple
 WORKDIR /app

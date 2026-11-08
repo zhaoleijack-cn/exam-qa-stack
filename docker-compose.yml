@@ -12,6 +12,14 @@ services:
       KB_DATA: /data
     volumes:
       - ./data/kb:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    security_opt:
+      - no-new-privileges:true
 
   ocr-service:
     build: ./ocr-service
@@ -19,7 +27,7 @@ services:
     container_name: ocr-service
     restart: unless-stopped
     ports:
-      - "${OCR_PORT:-8093}:8090"
+      - "127.0.0.1:${OCR_PORT:-8093}:8090"   # 只给本机用，容器间走内部网络
     env_file:
       - .env
     environment:
@@ -27,6 +35,14 @@ services:
       SHARED_MODELS: /shared/llm_models.json
     volumes:
       - ./data/solver:/shared:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/healthz', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    security_opt:
+      - no-new-privileges:true
 
   exam-solver:
     build: ./exam-solver
@@ -47,3 +63,11 @@ services:
       KB_DATA: /app/data
     volumes:
       - ./data/solver:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8092/healthz', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    security_opt:
+      - no-new-privileges:true

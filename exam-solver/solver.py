@@ -1,10 +1,16 @@
 """答题流水线：OCR → 检索 → 生成 → 校验（低置信度复核）。"""
 import json
+import os
 import re
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
 import config
+
+# 全局 LLM 并发闸：多个批次/多人同时上传时，避免把上游打爆（429）
+_LLM_SEM = threading.BoundedSemaphore(max(1, int(os.environ.get('LLM_MAX_CONCURRENCY', '8'))))
+MAX_CONCURRENCY = 8
 
 SYSTEM = ('你是银行考试答题助手。只能依据用户给出的【资料】作答，不得使用资料以外的知识。'
           '资料不足时降低 confidence，不要猜。只输出 JSON，不要解释。')
@@ -105,8 +111,9 @@ def generate(q, hits, retry=False, temperature=0, model_id=''):
     user = tpl.format(stem=q.get('stem', ''), options=opt_txt,
                       context=format_context(hits), letters=letters)
     t0 = time.time()
-    raw = config.chat([{'role': 'system', 'content': SYSTEM},
-                       {'role': 'user', 'content': user}], temperature=temperature, model_id=model_id)
+    with _LLM_SEM:
+        raw = config.chat([{'role': 'system', 'content': SYSTEM},
+                           {'role': 'user', 'content': user}], temperature=temperature, model_id=model_id)
     obj = _json_obj(raw) or {}
     ans, ok = norm_answer(obj.get('answer'), q.get('type', '单选'), set(opts.keys()) or {'正确', '错误'})
     conf = obj.get('confidence', 0.5)
@@ -124,6 +131,7 @@ def generate(q, hits, retry=False, temperature=0, model_id=''):
 def answer_one(q, dataset, topk=6, verify_below=0.6, model_id=''):
     t0 = time.time()
     hits = []
+    err = ''
     try:
         hits = config.retrieve(dataset['collection'], build_query(q), topk)
     except Exception as e:
@@ -203,7 +211,8 @@ def solve_images(images, dataset, concurrency=5, only_ocr=False, model_id=''):
             q['_ocr_ms'] = ms
             # v1.0.2: OCR 质量贯穿到每题——low/警告不再被答题端高置信掩盖
             q['_ocr_confidence'] = r.get('confidence', 'high')
-            q['_ocr_warnings'] = list(r.get('warnings') or [])
+            # 部分题目校验失败时，OCR 会返回可用题目 + errors；把 errors 也带进警告
+            q['_ocr_warnings'] = list(r.get('warnings') or []) + list(r.get('errors') or [])
             questions.append(q)
 
     if only_ocr:
@@ -221,7 +230,8 @@ def solve_images(images, dataset, concurrency=5, only_ocr=False, model_id=''):
                     'needs_review': True,
                     'ms': {'total': 0}}
 
-    with ThreadPoolExecutor(max_workers=max(1, concurrency)) as ex:
+    concurrency = max(1, min(MAX_CONCURRENCY, int(concurrency or 1)))
+    with ThreadPoolExecutor(max_workers=concurrency) as ex:
         answers = list(ex.map(_answer_safe, questions))
 
     out = []

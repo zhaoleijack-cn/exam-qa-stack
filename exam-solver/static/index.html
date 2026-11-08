@@ -74,6 +74,9 @@ details summary{cursor:pointer}
       <label style="color:var(--muted);font-size:13px">并发
         <input type="number" id="conc" value="5" min="1" max="10" style="width:60px">
       </label>
+      <label style="color:var(--muted);font-size:13px;display:flex;align-items:center;gap:4px">
+        <input type="checkbox" id="force" style="width:auto"> 强制重答
+      </label>
       <button class="ghost" id="ocrOnly">仅识别（不入清单）</button>
       <button class="ghost" id="camBtn">📷 拍照即答</button>
       <button class="primary" id="go">识别并作答</button>
@@ -207,6 +210,7 @@ async function run(onlyOcr, list){
   fd.append('dataset_id', ds); fd.append('concurrency', $('#conc').value);
   fd.append('model_id', $('#solve_model').value);
   fd.append('only_ocr', onlyOcr ? 'true' : 'false');
+  if($('#force').checked) fd.append('force', 'true');
   const btn = onlyOcr ? $('#ocrOnly') : $('#go');
   const label = btn.textContent;
   btn.disabled = true; btn.innerHTML = '<span class="spin"></span>' + (onlyOcr?'识别中':'作答中');
@@ -214,7 +218,8 @@ async function run(onlyOcr, list){
   else $('#list').innerHTML = '<div class="empty"><span class="spin"></span>正在识别并作答，题目多时约 10~30 秒</div>';
   try{
     const d = await j('/api/solve', {method:'POST', body:fd});
-    if(d.skipped && d.skipped.length) alert(`已跳过 ${d.skipped.length} 张重复图片`);
+    if(d.skipped && d.skipped.length) alert(`已跳过 ${d.skipped.length} 张图片（同库已答过，可勾选「强制重答」重新识别）`);
+    if(d.errors && d.errors.length) alert(`有 ${d.errors.length} 张图识别失败：\n` + d.errors.slice(0,3).map(e=>`${e.image}: ${e.error}`).join('\n'));
     if(onlyOcr){
       $('#preview').innerHTML = d.questions.length
         ? `<div class="preview"><div class="ph">本次识别结果（未加入清单）</div>` +
@@ -289,18 +294,18 @@ async function llmLoad(){
       if (!list.length) h += '<div style="color:#999;font-size:12px">（暂无）</div>';
       list.forEach(m => {
         h += '<div style="display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid #eee;flex-wrap:wrap">' +
-          '<b>' + (m.active ? '\u2705 ' : '') + m.name + '</b>' +
-          '<span style="color:#888;font-size:12px">' + m.model + '</span>' +
+          '<b>' + (m.active ? '\u2705 ' : '') + esc(m.name) + '</b>' +
+          '<span style="color:#888;font-size:12px">' + esc(m.model) + '</span>' +
           '<span style="flex:1"></span>' +
-          (m.active ? '' : '<button data-role="' + role + '" data-id="' + m.id + '" onclick="llmActive(this.dataset.role, this.dataset.id)">设为生效</button>') +
-          '<button data-role="' + role + '" data-id="' + m.id + '" onclick="llmEdit(this.dataset.role, this.dataset.id)">编辑</button>' +
-          '<button data-role="' + role + '" data-id="' + m.id + '" onclick="llmTest(this.dataset.role, this.dataset.id, this)">测试</button>' +
-          '<button data-role="' + role + '" data-id="' + m.id + '" onclick="llmDel(this.dataset.role, this.dataset.id)">删除</button></div>';
+          (m.active ? '' : '<button data-role="' + role + '" data-id="' + esc(m.id) + '" onclick="llmActive(this.dataset.role, this.dataset.id)">设为生效</button>') +
+          '<button data-role="' + role + '" data-id="' + esc(m.id) + '" onclick="llmEdit(this.dataset.role, this.dataset.id)">编辑</button>' +
+          '<button data-role="' + role + '" data-id="' + esc(m.id) + '" onclick="llmTest(this.dataset.role, this.dataset.id, this)">测试</button>' +
+          '<button data-role="' + role + '" data-id="' + esc(m.id) + '" onclick="llmDel(this.dataset.role, this.dataset.id)">删除</button></div>';
       });
     }
     gid('llmList').innerHTML = h;
     const sm = gid('solve_model');
-    if (sm) sm.innerHTML = (d.answer || []).map(m => '<option value="' + m.id + '"' + (m.active ? ' selected' : '') + '>' + m.name + '</option>').join('');
+    if (sm) sm.innerHTML = (d.answer || []).map(m => '<option value="' + esc(m.id) + '"' + (m.active ? ' selected' : '') + '>' + esc(m.name) + '</option>').join('');
   }catch(e){ gid('llmList').textContent = '加载失败: ' + e.message; }
 }
 async function llmSave(){
@@ -321,7 +326,8 @@ async function llmEdit(role, mid){
     const m = await j('/api/llm/models/' + role + '/' + mid + '/raw');
     editing = {role: role, id: mid};
     gid('lm_role').value = role; gid('lm_name').value = m.name || '';
-    gid('lm_url').value = m.base_url || ''; gid('lm_key').value = m.api_key || '';
+    gid('lm_url').value = m.base_url || ''; gid('lm_key').value = '';
+    gid('lm_key').placeholder = m.api_key_set ? '已保存（留空=沿用原值）' : '必填';
     gid('lm_model').value = m.model || ''; gid('lm_active').checked = !!m.active;
     gid('lm_save').textContent = '更新模型';
     openForm(); gid('lm_name').focus();

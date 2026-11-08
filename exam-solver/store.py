@@ -1,4 +1,5 @@
 """答题结果的持久化（SQLite）：一张总清单，按批次增量追加。"""
+import contextlib
 import json
 import sqlite3
 import time
@@ -11,11 +12,17 @@ DATA.mkdir(exist_ok=True)
 DB = DATA / 'answers.db'
 
 
+@contextlib.contextmanager
 def conn():
+    """每次用完显式关闭，避免长时间运行后连接/句柄累积。"""
     c = sqlite3.connect(DB, timeout=15)
     c.row_factory = sqlite3.Row
-    c.execute('PRAGMA journal_mode=WAL')
-    return c
+    try:
+        c.execute('PRAGMA journal_mode=WAL')
+        yield c
+        c.commit()
+    finally:
+        c.close()
 
 
 def init():
@@ -33,13 +40,22 @@ def init():
         ''')
 
 
-def image_seen(h):
-    """该图片是否已有"答出过答案"的成功记录；空答案/失败不算，允许自动重试。"""
+def image_seen(h, dataset_id=''):
+    """该图片在**同一个知识库**里是否已有答出过答案的记录。
+
+    v1.0.3: 去重按库隔离——同一张图换库重答不会再被静默跳过；空答案/失败不算，允许重试。
+    """
     if not h:
         return False
     with conn() as c:
-        return c.execute("SELECT 1 FROM items WHERE image_hash=? AND answer<>'' LIMIT 1",
-                         (h,)).fetchone() is not None
+        if dataset_id:
+            row = c.execute("SELECT 1 FROM items i JOIN batches b ON b.id=i.batch_id "
+                            "WHERE i.image_hash=? AND i.answer<>'' AND b.dataset_id=? LIMIT 1",
+                            (h, dataset_id)).fetchone()
+        else:
+            row = c.execute("SELECT 1 FROM items WHERE image_hash=? AND answer<>'' LIMIT 1",
+                            (h,)).fetchone()
+        return row is not None
 
 
 def save_batch(dataset, questions, hashes):
@@ -53,7 +69,9 @@ def save_batch(dataset, questions, hashes):
         # 后续题目会查到自己刚写的记录而被当成重复图片跳过。
         # 只把"有答案"的记录当缓存：空答案/失败记录不挡后续重答。
         existing = {r['image_hash'] for r in c.execute(
-            "SELECT DISTINCT image_hash FROM items WHERE image_hash<>'' AND answer<>''")}
+            "SELECT DISTINCT i.image_hash FROM items i JOIN batches b ON b.id=i.batch_id "
+            "WHERE i.image_hash<>'' AND i.answer<>'' AND b.dataset_id=?",
+            (dataset.get('id', ''),))}
         for seq, q in enumerate(questions):
             h = hashes.get(q.get('image', ''), '')
             if h and h in existing:
@@ -67,8 +85,10 @@ def save_batch(dataset, questions, hashes):
                        json.dumps(q.get('evidence') or [], ensure_ascii=False),
                        1 if q.get('needs_review') else 0, seq, now))
             added += 1
-        c.execute('INSERT INTO batches(id,dataset_id,dataset_name,created_at,images,added) VALUES(?,?,?,?,?,?)',
-                  (bid, dataset.get('id', ''), dataset.get('name', ''), now, len(hashes), added))
+        if added:      # 空批次不落库，避免删空后堆一堆 0 题记录
+            c.execute('INSERT INTO batches(id,dataset_id,dataset_name,created_at,images,added) '
+                      'VALUES(?,?,?,?,?,?)',
+                      (bid, dataset.get('id', ''), dataset.get('name', ''), now, len(hashes), added))
     return bid, added, len(hashes)
 
 
@@ -84,6 +104,16 @@ def all_items():
         d['index'] = i
         out.append(d)
     return out
+
+
+def stats():
+    """SQL 聚合，替代过去"全表读出来再算"的轮询开销。"""
+    with conn() as c:
+        row = c.execute('SELECT COUNT(*), COALESCE(MAX(created_at),0), '
+                        'COALESCE(SUM(needs_review),0), COALESCE(AVG(confidence),0) '
+                        'FROM items').fetchone()
+        return {'total': row[0], 'latest': row[1], 'needs_review': row[2],
+                'avg_confidence': round(row[3], 2)}
 
 
 def batches():

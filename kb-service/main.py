@@ -1,4 +1,4 @@
-import os, io, json, re, glob, sqlite3, time, threading, hashlib
+import os, io, json, re, glob, secrets, sqlite3, time, threading, hashlib
 from typing import List, Optional
 import numpy as np
 import requests
@@ -8,13 +8,16 @@ from pydantic import BaseModel
 
 DATA_DIR = os.environ.get('KB_DATA', '/data')
 CFG = json.load(open(os.path.join(DATA_DIR, 'config.json')))
-API_KEY = CFG['api_key']
+API_KEY = str(CFG.get('api_key') or '').strip()
+if not API_KEY:
+    # 空 key 会让 `x_api_key != API_KEY` 对无头请求成立（false 变成 pass），必须拒绝启动
+    raise RuntimeError('data/kb/config.json 的 api_key 为空：拒绝启动（否则等于无鉴权）')
 EMBED_URL = CFG.get('embed_url', 'http://fastgpt-aiproxy:3000/v1/embeddings')
 EMBED_TOKEN = CFG.get('embed_token', '')
 EMBED_MODEL = CFG.get('embed_model', 'text-embedding-v4')
 DIMS = int(CFG.get('embed_dims', 1536))
-CHUNK_SIZE = int(CFG.get('chunk_size', 800))
-CHUNK_OVERLAP = int(CFG.get('chunk_overlap', 100))
+CHUNK_SIZE = max(50, int(CFG.get('chunk_size', 800)))
+CHUNK_OVERLAP = max(0, min(CHUNK_SIZE - 50, int(CFG.get('chunk_overlap', 100))))
 DS_RE = re.compile(r'^[a-z0-9_]{1,32}$')
 
 app = FastAPI(title='Knowledge Base Service', version='2.0',
@@ -25,7 +28,7 @@ STORES = {}
 STORE_LOCK = threading.Lock()
 
 def auth(x_api_key: str = Header(default='')):
-    if x_api_key != API_KEY:
+    if not API_KEY or not secrets.compare_digest(str(x_api_key), API_KEY):
         raise HTTPException(401, 'invalid api key')
 
 def check_ds(dataset: str) -> str:
@@ -97,10 +100,14 @@ class Store:
         c = self.db.execute('SELECT COUNT(*) FROM chunks').fetchone()[0]
         return {'dataset': self.name, 'documents': d, 'chunks': c}
 
-def get_store(dataset: str) -> Store:
+def get_store(dataset: str, create: bool = False) -> Optional[Store]:
+    """create=False 时只取已存在的库——避免 GET/检索把不存在的库名建成空库。"""
     check_ds(dataset)
     with STORE_LOCK:
         if dataset not in STORES:
+            path = os.path.join(DATA_DIR, 'kb_%s.db' % dataset)
+            if not os.path.exists(path) and not create:
+                return None
             STORES[dataset] = Store(dataset)
         return STORES[dataset]
 
@@ -116,7 +123,10 @@ def embed(texts: List[str]) -> np.ndarray:
                 json={'model': EMBED_MODEL, 'input': batch, 'dimensions': DIMS})
             if r.status_code != 200: raise RuntimeError(r.text[:150])
             for item in r.json()['data']:
-                out[i + item['index']] = np.array(item['embedding'], dtype=np.float32)
+                v = np.array(item['embedding'], dtype=np.float32)
+                if len(v) != DIMS:
+                    raise RuntimeError('embedding 维度 %d 与配置 %d 不一致' % (len(v), DIMS))
+                out[i + item['index']] = v
         except Exception as e:
             print('[embed] batch %d failed (%s), fallback single' % (i, str(e)[:80]))
             todo.extend(range(i, min(i + B, len(texts))))
@@ -132,7 +142,11 @@ def embed(texts: List[str]) -> np.ndarray:
     failed = [i for i, v in enumerate(out) if v is None]
     if failed:
         raise HTTPException(502, 'embedding failed for %d texts' % len(failed))
-    return np.vstack(out)
+    mat = np.vstack(out)
+    # 显式 L2 归一：换任何 embedding 模型后，点积都等于余弦相似度
+    norms = np.linalg.norm(mat, axis=1, keepdims=True)
+    norms[norms == 0] = 1.0
+    return mat / norms
 
 def chunk_text(text: str) -> List[str]:
     text = text.strip()
@@ -180,10 +194,14 @@ class SearchReq(BaseModel):
 
 @app.post('/search')
 def search(req: SearchReq, _: None = Depends(auth)):
-    if not req.query.strip(): raise HTTPException(400, 'empty query')
-    qv = embed([req.query.strip()])[0]
-    st = get_store(req.dataset)
-    return {'results': st.search(qv, req.top_k, req.min_score), 'total': req.top_k}
+    q = (req.query or '').strip()
+    if not q: raise HTTPException(400, 'empty query')
+    if len(q) > 2000: raise HTTPException(400, 'query 过长（>2000 字）')
+    top_k = max(1, min(50, int(req.top_k or 8)))   # 不夹取会被 top_k=10000 拖死
+    st = get_store(req.dataset, create=False)
+    if st is None: raise HTTPException(404, '知识库不存在')
+    qv = embed([q])[0]
+    return {'results': st.search(qv, top_k, req.min_score), 'top_k': top_k}
 
 class BulkItem(BaseModel):
     title: str
@@ -195,7 +213,7 @@ class BulkReq(BaseModel):
 
 @app.post('/ingest/bulk')
 def ingest_bulk(req: BulkReq, _: None = Depends(auth)):
-    get_store(req.dataset)
+    get_store(req.dataset, create=True)
     titles = []
     seen = set()
     for it in req.items:
@@ -208,15 +226,16 @@ def ingest_bulk(req: BulkReq, _: None = Depends(auth)):
             if it.title == title: texts.extend(chunk_text(it.text))
         if not texts: continue
         doc_id = make_doc_id(req.dataset, title)
-        get_store(req.dataset).add(doc_id, title, texts, embed(texts))
+        get_store(req.dataset, create=True).add(doc_id, title, texts, embed(texts))
         out.append({'doc_id': doc_id, 'title': title, 'chunks': len(texts)})
     return {'imported': out, 'total_chunks': sum(o['chunks'] for o in out)}
 
 @app.post('/ingest/file')
-async def ingest_file(file: UploadFile = File(...), dataset: str = Form(...),
-                      title: Optional[str] = Form(None), _: None = Depends(auth)):
-    get_store(dataset)
-    b = await file.read()
+def ingest_file(file: UploadFile = File(...), dataset: str = Form(...),
+                title: Optional[str] = Form(None), _: None = Depends(auth)):
+    # 同步 def：PDF 解析 + embedding 是重活，放线程池，别卡住整个服务的事件循环
+    get_store(dataset, create=True)
+    b = file.file.read()
     if len(b) > 30 * 1024 * 1024: raise HTTPException(400, 'file too large (max 30MB)')
     title = title or file.filename
     try: text = parse_file(file.filename, b)
@@ -224,7 +243,7 @@ async def ingest_file(file: UploadFile = File(...), dataset: str = Form(...),
     chunks = chunk_text(text)
     if not chunks: raise HTTPException(400, 'no content extracted')
     doc_id = make_doc_id(dataset, title)
-    get_store(dataset).add(doc_id, title, chunks, embed(chunks))
+    get_store(dataset, create=True).add(doc_id, title, chunks, embed(chunks))
     return {'doc_id': doc_id, 'title': title, 'chunks': len(chunks), 'chars': len(text)}
 
 class TextReq(BaseModel):
@@ -237,7 +256,7 @@ def ingest_text(req: TextReq, _: None = Depends(auth)):
     chunks = chunk_text(req.text)
     if not chunks: raise HTTPException(400, 'empty text')
     doc_id = make_doc_id(req.dataset, req.title)
-    get_store(req.dataset).add(doc_id, req.title, chunks, embed(chunks))
+    get_store(req.dataset, create=True).add(doc_id, req.title, chunks, embed(chunks))
     return {'doc_id': doc_id, 'title': req.title, 'chunks': len(chunks)}
 
 @app.get('/datasets')
@@ -246,13 +265,15 @@ def datasets(_: None = Depends(auth)):
     for p in sorted(glob.glob(os.path.join(DATA_DIR, 'kb_*.db'))):
         name = os.path.basename(p)[3:-3]
         try:
-            out.append(get_store(name).stats())
+            st = get_store(name)
+            out.append(st.stats())
         except Exception: pass
     return {'datasets': out}
 
 @app.get('/documents/{dataset}')
 def documents(dataset: str, _: None = Depends(auth)):
-    st = get_store(dataset)
+    st = get_store(dataset, create=False)
+    if st is None: raise HTTPException(404, '知识库不存在')
     return {'documents': [{'doc_id': r[0], 'title': r[1], 'created_at': r[2], 'chunks': r[3]}
             for r in st.db.execute('SELECT d.id, d.title, d.created_at, COUNT(ch.id) '
                                    'FROM documents d LEFT JOIN chunks ch ON ch.doc_id=d.id '
@@ -260,7 +281,9 @@ def documents(dataset: str, _: None = Depends(auth)):
 
 @app.delete('/documents/{dataset}/{doc_id}')
 def delete_document(dataset: str, doc_id: str, _: None = Depends(auth)):
-    get_store(dataset).delete_doc(doc_id)
+    st = get_store(dataset, create=False)
+    if st is None: raise HTTPException(404, '知识库不存在')
+    st.delete_doc(doc_id)
     return {'deleted': doc_id}
 
 @app.get('/', response_class=HTMLResponse)

@@ -17,7 +17,7 @@
 | 服务 | 宿主端口 | 作用 | 数据卷 |
 |---|---|---|---|
 | exam-solver | 8092 | 答题 API + 上传页 `/` + 只读看板 `/live` | `./data/solver`（answers.db、llm_models.json） |
-| ocr-service | 8093 | 图片 → 结构化题目 JSON（需视觉模型 key） | 无 |
+| ocr-service | 8093（仅本机回环） | 图片 → 结构化题目 JSON（需视觉模型 key） | `./data/solver`（只读挂载，共享模型配置） |
 | kb-service | 8090 | 知识库：建库/录入/检索（`X-API-Key` 鉴权） | `./data/kb`（config.json、index.html、kb_*.db） |
 
 ## 快速开始
@@ -32,12 +32,14 @@ docker compose up -d --build
 ```
 
 - 答题页：`http://<host>:8092/`（Basic Auth：`EXAM_AUTH_USER/PASS`）
+- 只读看板：`http://<host>:8092/live`（公开，数据来自公开接口 `/api/live/items`）
 - 知识库页：`http://<host>:8090/`（页内用 `api_key`，即 `KB_API_KEY`）
-- 健康检查：`/healthz`（solver）、`/health`（kb）、`/healthz`（ocr）
+- 健康检查：`/healthz`（solver）、`/health`（kb）、`/healthz`（ocr）；compose 已配 HEALTHCHECK，`docker compose ps` 直接看健康状态
+- 管理接口 `/api/items` 需要登录；匿名只能读到 `/api/live/items`
 
 ## 模型配置
 
-- **答题模型**：登录答题页 → 「⚙️ 模型配置」卡 → 添加（名称/调用地址/Key/模型名/用途），可存多条一键切换；不添加则回落到 env 的 `HS_PLAN_API_KEY` + Ark plan 端点。
+- **答题模型**：登录答题页 → 「⚙️ 模型配置」卡 → 添加（名称/调用地址/Key/模型名/用途），可存多条一键切换；编辑时 Key 留空沿用原值（不回显明文）。不添加则回落到 env 的 `HS_PLAN_API_KEY` + Ark plan 端点。
 - **OCR 识图模型**：同卡的 `ocr` 用途条目。ocr-service 通过 `./data/solver:/shared:ro` 读取同一份 `llm_models.json`，改完即生效，无需重建容器。
 - **向量模型**：kb 的 `data/kb/config.json`（`embed_url` / `embed_token` / `embed_model` / `embed_dims`）。⚠️ 换模型或维度 = 该库全部向量作废重建。
 

@@ -122,7 +122,7 @@ function appendNew(items){
 }
 
 async function full(){
-  const d = await fetch('/api/items').then(r=>r.json());
+  const d = await fetch('/api/live/items').then(r=>r.json());
   all = d.items; lastSig = d.total + ':' + (d.latest||0);
   lastLatest = d.latest || 0; lastTotal = d.total;
   renderSummary(d);
@@ -141,7 +141,7 @@ async function full(){
 async function poll(){
   if(document.hidden) return;
   try{
-    const b = await fetch('/api/items?brief=1').then(r=>r.json());
+    const b = await fetch('/api/live/items?brief=1').then(r=>r.json());
     const sig = b.total + ':' + (b.latest||0);
     if(sig !== lastSig){ await full(); }
     else { $('#dot').classList.remove('err'); $('#dot').classList.add('ok'); }

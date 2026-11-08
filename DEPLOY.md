@@ -14,6 +14,8 @@
 
 端口占用：默认 8090（kb）、8092（solver）、8093（ocr）。冲突时在 `.env` 里改 `KB_PORT/SOLVER_PORT/OCR_PORT`，容器内端口不变。
 
+安全默认：**ocr-service 只绑 `127.0.0.1`**（容器间走内部网络，不需要对外暴露）；solver 的 `/api/items` 需登录，匿名只能读 `/live` 与 `/api/live/items`。
+
 ## 二、五步起栈
 
 ```bash
@@ -45,8 +47,10 @@ docker compose logs -f --tail=50
 ```bash
 curl -s localhost:8092/healthz            # 应见 ok:true、datasets>0、keys.ark:true
 curl -s localhost:8090/health             # {"status":"ok","datasets":N,"dim":1536,...}
-curl -s localhost:8093/healthz            # key_configured:true
+curl -s localhost:8093/healthz            # key_configured:true（该端口只在宿主机回环，外部访问会被拒）
 curl -s -o /dev/null -w '%{http_code}\n' localhost:8092/    # 无凭据应为 401
+curl -s -o /dev/null -w '%{http_code}\n' localhost:8092/api/items         # 401（管理接口要登录）
+curl -s -o /dev/null -w '%{http_code}\n' localhost:8092/api/live/items    # 200（看板专用公开接口）
 ```
 
 浏览器：
@@ -82,7 +86,7 @@ curl -s -X POST localhost:8090/search \
 
 ## 五、模型配置
 
-- **答题模型**：登录答题页 → 「⚙️ 模型配置」卡 → 添加（名称 / 调用地址 / Key / 模型名 / 用途 answer｜ocr）→ 一键切换。未配置时回落到 `.env` 的 `HS_PLAN_API_KEY` + Ark plan 端点。
+- **答题模型**：登录答题页 → 「⚙️ 模型配置」卡 → 添加（名称 / 调用地址 / Key / 模型名 / 用途 answer｜ocr）→ 一键切换。未配置时回落到 `.env` 的 `HS_PLAN_API_KEY` + Ark plan 端点。编辑已有模型时 **Key 留空 = 沿用原值**（接口不回显明文），`extra`（如关闭 thinking）也会保留。
 - **OCR 识图模型**：同一张卡的 `ocr` 用途条目。compose 已把 `./data/solver` 只读挂到 ocr-service 的 `/shared`，`SHARED_MODELS=/shared/llm_models.json`，所以网页里保存/切换 `ocr` 条目后**下一次识图立即生效**，不用重建容器；文件里没有启用的 ocr 条目时才回落到 `.env` 的 `HS_PLAN_API_KEY`/`OCR_MODEL`。
 - **向量模型**：`data/kb/config.json` 的 `embed_url/embed_token/embed_model/embed_dims`。换模型或维度 = 该库全部向量作废，必须重新录入。
 
@@ -122,6 +126,10 @@ SQLite 是 WAL 模式：**停容器后再拷**才是干净快照（停容器会�
 | 页面还是旧版 | 浏览器缓存：加 `?v=2` 或用无痕窗口；服务端已发 no-store |
 | 容器起不来且日志无异常 | `docker compose config` 校验 YAML；`docker compose up` 不带 `-d` 看构建输出 |
 | 改了源码不生效 | 只 `restart` 不会重建镜像，必须 `up -d --build` |
+| 上传后提示「已跳过」但没答案 | 同库已答过同一张图（去重按库隔离）；勾选页面「强制重答」再传 |
+| 一页只出部分题目 | OCR 单题校验失败不再整页丢弃：可用题目照常作答，失败题在响应 `errors` 里，页面会弹提示 |
+| 网页写操作被 403「拒绝跨站请求」 | 跨站 CSRF 防护（浏览器带 `Sec-Fetch-Site: cross-site`）；本站操作不会触发，curl 不受影响 |
+| 换 embedding 模型后分数异常 | 新向量与旧库维度/模型不一致 → 需重建该库并重新录入（服务启动/录入时已校验维度） |
 
 ## 九、从源码版（非 Docker）迁移
 

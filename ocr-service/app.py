@@ -26,7 +26,7 @@ from typing import Any
 import httpx
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
-from PIL import Image
+from PIL import Image, ImageOps
 
 API_BASE = os.environ.get("OCR_API_BASE", "https://ark.cn-beijing.volces.com/api/plan/v3").rstrip("/")
 API_KEY = os.environ.get("HS_PLAN_API_KEY", "")
@@ -50,6 +50,7 @@ def ocr_active():
             "extra": {"thinking": {"type": "disabled"}}}
 MAX_SIDE = int(os.environ.get("OCR_MAX_SIDE", "1920"))
 MAX_UPLOAD_MB = int(os.environ.get("OCR_MAX_UPLOAD_MB", "20"))
+MAX_PIXELS = int(os.environ.get("OCR_MAX_PIXELS", "40000000"))  # 解压炸弹防护（约 40MP）
 STRICT_DEFAULT = os.environ.get("OCR_STRICT", "0") == "1"
 CONCURRENCY = int(os.environ.get("OCR_CONCURRENCY", "4"))
 
@@ -223,8 +224,14 @@ def validate_question(q: dict) -> tuple[dict | None, list[str], list[str]]:
 
 # ---------- 上游调用 ----------
 
+class UpstreamFatal(RuntimeError):
+    """不可重试的上游错误（4xx / 缺 Key），重试只会白等。"""
+
+
 async def call_vision(b64: str, mime: str, prompt: str) -> tuple[str, dict, float]:
     mo = ocr_active()
+    if not mo["key"]:
+        raise UpstreamFatal("未配置模型 Key：请设置 HS_PLAN_API_KEY 或在网页「模型配置」里添加识图模型")
     payload = {
         "model": mo["model"],
         "messages": [
@@ -247,9 +254,15 @@ async def call_vision(b64: str, mime: str, prompt: str) -> tuple[str, dict, floa
             async with _sem:
                 r = await _client_get().post(f"{mo['base']}/chat/completions", json=payload, headers=headers)
             if r.status_code >= 400:
-                raise RuntimeError(f"上游 HTTP {r.status_code}: {r.text[:200]}")
+                msg = f"上游 HTTP {r.status_code}: {r.text[:200]}"
+                # 408/409/425/429 与 5xx 才是"等一下可能好"的；其余 4xx 立即失败
+                if r.status_code in (408, 409, 425, 429) or r.status_code >= 500:
+                    raise RuntimeError(msg)
+                raise UpstreamFatal(msg)
             d = r.json()
             return d["choices"][0]["message"]["content"], d.get("usage") or {}, time.time() - t0
+        except UpstreamFatal:
+            raise
         except Exception as e:  # 网络错误退避重试
             last = e
             if attempt < 2:
@@ -262,9 +275,21 @@ async def call_vision(b64: str, mime: str, prompt: str) -> tuple[str, dict, floa
 def prepare_image(data: bytes) -> tuple[str, str, dict]:
     try:
         im = Image.open(io.BytesIO(data))
+        w0, h0 = im.size
+        if w0 * h0 > MAX_PIXELS:
+            raise HTTPException(413, f"图片像素过大（{w0}x{h0}），上限 {MAX_PIXELS} 像素")
         im.load()
+    except HTTPException:
+        raise
+    except Image.DecompressionBombError as e:
+        raise HTTPException(413, f"图片像素过大：{e}")
     except Exception as e:
         raise HTTPException(400, f"无法解析图片：{e}")
+    # 手机直出的照片常带 EXIF 方向，不摆正会横着进模型，识别率断崖下降
+    try:
+        im = ImageOps.exif_transpose(im) or im
+    except Exception:
+        pass
     orig = im.size
     if im.mode not in ("RGB", "L"):
         im = im.convert("RGB")
@@ -291,11 +316,15 @@ async def recognize(data: bytes, strict: bool) -> dict:
     usage: dict = {}
     raw_last = ""
 
+    best = None   # (rank, questions, errors, warnings, usage, raw)
     for attempt in (1, 2):
         attempts = attempt
         prompt = PROMPT if attempt == 1 else PROMPT_RETRY
         try:
             raw, u, _ = await call_vision(b64, mime, prompt)
+        except UpstreamFatal as e:
+            errors = [str(e)]
+            break
         except RuntimeError as e:
             errors = [str(e)]
             break
@@ -310,17 +339,24 @@ async def recognize(data: bytes, strict: bool) -> dict:
         if not items:
             errors = [f"第 {attempt} 次输出没有题目"]
             continue
-        questions = []
-        errors = []
-        warnings = []
+        qs, errs, warns = [], [], []
         for idx, q in enumerate(items, 1):
-            clean, errs, warns = validate_question(q)
-            errors.extend(f"第{idx}题：{e}" for e in errs)
-            warnings.extend(f"第{idx}题：{w}" for w in warns)
+            clean, e_, w_ = validate_question(q)
+            errs.extend(f"第{idx}题：{e}" for e in e_)
+            warns.extend(f"第{idx}题：{w}" for w in w_)
             if clean:
-                questions.append(clean)
-        if not errors:
+                qs.append(clean)
+        # 部分题目校验失败时，保留能用的题目（不再整张图丢弃）
+        rank = (len(errs), -len(qs))
+        if best is None or rank < best[0]:
+            best = (rank, qs, errs, warns, u or {}, raw)
+        if not errs:
             break
+
+    if best is not None:
+        _, questions, errors, warnings, u_best, raw_best = best
+        usage = u_best or usage
+        raw_last = raw_best or raw_last
 
     # 重复题检测
     seen: dict[str, int] = {}
@@ -369,7 +405,8 @@ async def recognize(data: bytes, strict: bool) -> dict:
 
     elapsed_ms = int((time.time() - t0) * 1000)
     body = {
-        "ok": not errors,
+        "ok": bool(questions),   # 有可用题目即成功；部分失败的题在 errors 里列出
+        "partial": bool(questions) and bool(errors),
         "questions": questions,
         "warnings": warnings,
         "confidence": confidence,

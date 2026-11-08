@@ -83,6 +83,7 @@
 <script>
 const $ = id => document.getElementById(id);
 const key = () => localStorage.getItem('kbkey') || '';
+const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function msg(t, ok) { const m = $('msg'); m.textContent = t; m.style.background = ok ? '#16a34a' : '#dc2626'; m.style.display = 'block'; setTimeout(() => m.style.display = 'none', 3500); }
 function saveKey() { localStorage.setItem('kbkey', $('key').value.trim()); msg('密钥已保存', true); loadAll(); updateTarget(); }
 async function api(path, opt) {
@@ -104,13 +105,20 @@ async function loadAll() {
 }
 async function loadDocs() {
   const ds = curDs(); if (!ds) return;
-  const d = await api('/documents/' + ds);
+  let d;
+  try { d = await api('/documents/' + encodeURIComponent(ds)); }
+  catch (e) {
+    const tb = $('docs'); tb.innerHTML = '<tr><th>标题</th><th>块数</th><th>录入时间</th><th></th></tr>';
+    if (String(e.message).indexOf('404') === 0) msg('该库还不存在，录入第一份资料后自动创建', false);
+    else msg('加载文档失败: ' + e.message, false);
+    return;
+  }
   const tb = $('docs'); tb.innerHTML = '<tr><th>标题</th><th>块数</th><th>录入时间</th><th></th></tr>';
   (d.documents || []).forEach(x => {
     const tr = document.createElement('tr');
     const t = new Date(x.created_at * 1000);
-    tr.innerHTML = '<td>' + x.title + '</td><td>' + x.chunks + '</td><td class="muted">' + t.toLocaleString('zh-CN') + '</td>' +
-                   '<td><button class="del" onclick="del(\'' + x.doc_id + '\')">删除</button></td>';
+    tr.innerHTML = '<td>' + esc(x.title) + '</td><td>' + esc(x.chunks) + '</td><td class="muted">' + t.toLocaleString('zh-CN') + '</td>' +
+                   '<td><button class="del" onclick="del(\'' + esc(x.doc_id) + '\')">删除</button></td>';
     tb.appendChild(tr);
   });
 }
@@ -132,7 +140,7 @@ async function doSearch() {
   try {
     const r = await api('/search', { method: 'POST', body: JSON.stringify({ query: q, dataset: curDs(), top_k: 5 }) });
     $('hits').innerHTML = r.results.length ? r.results.map(x =>
-      '<div class="hit"><b>' + (x.score * 1).toFixed(3) + '</b> · ' + x.title + '<div>' + x.text.slice(0, 200) + '…</div></div>').join('') : '（无命中）';
+      '<div class="hit"><b>' + (x.score * 1).toFixed(3) + '</b> · ' + esc(x.title) + '<div>' + esc(x.text.slice(0, 200)) + '…</div></div>').join('') : '（无命中）';
   } catch (e) { $('hits').textContent = '失败: ' + e.message; }
 }
 async function del(id) {

@@ -22,7 +22,8 @@ app.mount('/static', StaticFiles(directory=BASE / 'static'), name='static')
 # 上传/写操作要鉴权；/live 只读看板公开（无鉴权、只读）
 AUTH_USER = os.environ.get('EXAM_AUTH_USER', 'exam')
 AUTH_PASS = os.environ.get('EXAM_AUTH_PASS', '')
-PUBLIC_PATHS = {'/live', '/static/live.html', '/api/items', '/healthz', '/favicon.ico'}
+# 只读看板用独立接口 /api/live/items，避免把管理用的 /api/items 整个暴露出去
+PUBLIC_PATHS = {'/live', '/static/live.html', '/api/live/items', '/healthz', '/favicon.ico'}
 
 
 def _is_public(path, method):
@@ -46,6 +47,10 @@ def _authorized(request):
 
 @app.middleware('http')
 async def auth_middleware(request: Request, call_next):
+    # CSRF：Basic Auth 会被浏览器自动带上，跨站写请求必须挡掉（非浏览器客户端无此头，不受影响）
+    if request.method not in ('GET', 'HEAD', 'OPTIONS') and \
+            request.headers.get('sec-fetch-site') == 'cross-site':
+        return JSONResponse({'detail': '拒绝跨站请求'}, status_code=403)
     if not _is_public(request.url.path, request.method) and not _authorized(request):
         return Response(status_code=401,
                         headers={'WWW-Authenticate': 'Basic realm="exam-upload", charset="UTF-8"'},
@@ -79,7 +84,8 @@ def healthz():
 
 @app.get('/api/datasets')
 def datasets():
-    return config.datasets()
+    # 交互式读取：绕过 10 秒 TTL，新建的库立刻出现在下拉里
+    return config.datasets(force=True)
 
 
 def _dataset(ds_id):
@@ -99,15 +105,21 @@ def solve(files: list[UploadFile] = File(...),
     """同步 def 路由：FastAPI 自动放入线程池，长任务不再阻塞事件循环。
     force=True 跳过去重缓存（换知识库重答 / 资料更新后重答）。"""
     ds = _dataset(dataset_id)
+    concurrency = max(1, min(8, int(concurrency)))
     images, hashes, skipped = [], {}, []
+    seen_hashes, total_bytes = set(), 0
     for f in files:
         data = f.file.read()
         if len(data) > 20 * 1024 * 1024:
             raise HTTPException(413, f'{f.filename} 超过 20MB')
+        total_bytes += len(data)
+        if total_bytes > 120 * 1024 * 1024:
+            raise HTTPException(413, '单次上传总量超过 120MB')
         h = hashlib.sha256(data).hexdigest()[:16]
-        if not force and store.image_seen(h):
+        if not force and (h in seen_hashes or store.image_seen(h, ds['id'])):
             skipped.append(f.filename)
             continue
+        seen_hashes.add(h)
         name = f.filename or 'q.jpg'
         while name in hashes:
             name = '_' + name
@@ -133,17 +145,29 @@ def solve(files: list[UploadFile] = File(...),
 def solve_json(payload: dict):
     import base64
     ds = _dataset(payload.get('dataset_id', ''))
+    try:
+        concurrency = int(payload.get('concurrency') or 5)
+    except (TypeError, ValueError):
+        concurrency = 5
+    concurrency = max(1, min(8, concurrency))
     images, hashes, skipped = [], {}, []
     force = bool(payload.get('force'))
+    seen_hashes, total_bytes = set(), 0
     for it in payload.get('images', []):
         b = it.get('base64', '')
         if ',' in b[:80]:
             b = b.split(',', 1)[1]
         data = base64.b64decode(b)
+        if len(data) > 20 * 1024 * 1024:
+            raise HTTPException(413, '单张图片超过 20MB')
+        total_bytes += len(data)
+        if total_bytes > 120 * 1024 * 1024:
+            raise HTTPException(413, '单次请求总量超过 120MB')
         h = hashlib.sha256(data).hexdigest()[:16]
-        if not force and store.image_seen(h):
+        if not force and (h in seen_hashes or store.image_seen(h, ds['id'])):
             skipped.append(it.get('name', 'q.jpg'))
             continue
+        seen_hashes.add(h)
         name = it.get('name', 'q.jpg')
         while name in hashes:
             name = '_' + name
@@ -152,7 +176,7 @@ def solve_json(payload: dict):
     if not images:
         return {'questions': [], 'errors': [], 'skipped': skipped, 'added': 0,
                 'meta': {'count': 0, 'total_ms': 0}}
-    result = solver.solve_images(images, ds, concurrency=int(payload.get('concurrency', 5)),
+    result = solver.solve_images(images, ds, concurrency=concurrency,
                                  only_ocr=bool(payload.get('only_ocr')))
     if not payload.get('only_ocr') and result['questions']:
         bid, added, n = store.save_batch(ds, result['questions'], hashes)
@@ -162,17 +186,25 @@ def solve_json(payload: dict):
     return result
 
 
+def _items_payload(brief=False):
+    stats = store.stats()          # SQL 聚合：总数/最新时间/需复核/平均分
+    if brief:
+        return {'total': stats['total'], 'latest': stats['latest']}
+    rows = store.all_items()
+    return {'items': rows, 'total': stats['total'], 'latest': stats['latest'],
+            'needs_review': stats['needs_review'],
+            'avg_confidence': stats['avg_confidence'], 'batches': store.batches()}
+
+
 @app.get('/api/items')
 def items(brief: int = 0):
-    rows = store.all_items()
-    latest = max((r['created_at'] for r in rows), default=0)
-    if brief:
-        return {'total': len(rows), 'latest': latest}
-    conf = [r['confidence'] for r in rows]
-    return {'items': rows, 'total': len(rows), 'latest': latest,
-            'needs_review': sum(1 for r in rows if r['needs_review']),
-            'avg_confidence': round(sum(conf) / len(conf), 2) if conf else 0,
-            'batches': store.batches()}
+    return _items_payload(bool(brief))
+
+
+@app.get('/api/live/items')
+def live_items(brief: int = 0):
+    """只读看板专用：与 /api/items 同结构，公开可读。"""
+    return _items_payload(bool(brief))
 
 
 @app.delete('/api/items/{item_id}')
@@ -234,7 +266,10 @@ def llm_add(payload: dict):
     entry = {'id': mid, 'role': role, 'name': name, 'base_url': base_url,
              'api_key': api_key or (existing[0].get('api_key', '') if existing else ''),
              'model': model, 'active': bool(payload.get('active'))}
-    if payload.get('extra'): entry['extra'] = payload['extra']
+    if payload.get('extra'):
+        entry['extra'] = payload['extra']
+    elif existing and existing[0].get('extra'):
+        entry['extra'] = existing[0]['extra']   # 编辑时未带 extra 则沿用原值
     if not entry['api_key']:
         raise HTTPException(400, '新模型必须提供 api_key')
     models = [m for m in models if not (m.get('id') == mid and m.get('role', 'answer') == role)]
@@ -251,7 +286,10 @@ def llm_add(payload: dict):
 def llm_raw(role: str, mid: str):
     hit = [m for m in config.llm_models() if m.get('id') == mid and m.get('role', 'answer') == role]
     if not hit: raise HTTPException(404, 'model not found')
-    return hit[0]
+    d = dict(hit[0])
+    d['api_key'] = ''            # 不回显明文；编辑时留空=沿用原值
+    d['api_key_set'] = bool(hit[0].get('api_key'))
+    return d
 
 
 @app.post('/api/llm/models/{role}/{mid}/active')
