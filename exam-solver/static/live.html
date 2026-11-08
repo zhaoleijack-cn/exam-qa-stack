@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>试题答案 · 实时</title>
+<style>
+:root{--bg:#f4f6f9;--card:#fff;--line:#e5e8ee;--text:#1f2430;--muted:#7b8496;
+--blue:#2563eb;--blue-soft:#eef4ff;--green:#16a34a;--red:#dc2626;--amber:#d97706}
+*{box-sizing:border-box}
+body{margin:0;font:15px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--text)}
+header{display:flex;align-items:center;gap:12px;padding:14px 22px;background:#fff;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:10}
+header h1{margin:0;font-size:16px;font-weight:600}
+header .dot{width:8px;height:8px;border-radius:50%;background:#cbd5e1;transition:.3s}
+header .dot.ok{background:var(--green);box-shadow:0 0 0 3px #dcfce7}
+header .dot.err{background:var(--red)}
+header .live{font-size:12px;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:2px 9px}
+header .meta{margin-left:auto;color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}
+.wrap{max-width:1080px;margin:0 auto;padding:18px}
+.summary{display:flex;gap:20px;flex-wrap:wrap;font-size:13px;color:var(--muted);margin-bottom:12px}
+.summary b{color:var(--text);font-size:16px;font-variant-numeric:tabular-nums}
+.summary .warn b{color:var(--amber)}
+.q{border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin-bottom:12px;background:#fff;transition:background .6s,box-shadow .6s}
+.q.flash{background:#fffbea;box-shadow:0 0 0 3px #fde68a}
+.q .top{display:flex;gap:8px;align-items:center;color:var(--muted);font-size:12px;margin-bottom:7px;flex-wrap:wrap}
+.q .tag{padding:1px 8px;border-radius:999px;background:#f1f5f9;color:#475569}
+.q .stem{font-weight:600;margin:2px 0 10px;font-size:15px;line-height:1.75}
+.opt{padding:5px 10px;border-radius:7px;margin:4px 0;color:#374151}
+.opt.right{background:#eaf7ee;color:#15803d;font-weight:600}
+.ans{margin-top:8px;font-size:14px}
+.ans b{color:var(--blue);font-size:17px}
+.warn{color:var(--amber);font-size:12px}
+.conf{margin-left:auto;font-variant-numeric:tabular-nums}
+details{margin-top:10px;font-size:12px;color:var(--muted)}
+details summary{cursor:pointer}
+.ev{border-left:2px solid var(--line);padding-left:8px;margin:6px 0}
+.empty{color:var(--muted);text-align:center;padding:50px 20px}
+.bad{color:var(--red)}
+.newtip{position:fixed;right:22px;bottom:22px;background:var(--blue);color:#fff;border:0;border-radius:999px;padding:10px 18px;font-size:14px;cursor:pointer;box-shadow:0 6px 20px rgba(37,99,235,.35);z-index:20;animation:pop .25s}
+@keyframes pop{from{transform:translateY(8px);opacity:0}to{transform:none;opacity:1}}
+</style>
+</head>
+<body>
+<header>
+  <span class="dot" id="dot"></span><h1>试题答案 · 实时</h1>
+  <span class="live">自动刷新 3s · 只读</span>
+  <span class="meta" id="meta"></span>
+</header>
+
+<div class="wrap">
+  <div class="summary" id="summary"></div>
+  <div id="list"><div class="empty">等待题目…</div></div>
+</div>
+<button class="newtip" id="newtip" hidden>有新题 ↓</button>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let known = new Set(), lastSig = '', lastLatest = 0, lastTotal = 0, all = [];
+const norm = s => String(s||'').replace(/[\s。，,．.]/g,'');
+
+// 答案高亮：字母型答案按字母匹配；文本型（判断题等）按选项文本匹配
+function isRight(q, k, v){
+  const a = String(q.answer||'').trim();
+  if(!a) return false;
+  if(/^[A-Za-z]+$/.test(a)) return a.toUpperCase().includes(k.toUpperCase());
+  const av = norm(a), vv = norm(v);
+  if(!av || !vv) return false;
+  if(av === vv) return true;
+  const groups = [['正确','对','√','是','真','T','true'],['错误','错','×','否','假','F','false']];
+  for(const g of groups){
+    const inA = g.includes(av), inV = g.includes(vv);
+    if(inA || inV) return inA && inV;
+  }
+  return av.includes(vv) || vv.includes(av);
+}
+
+function card(q){
+  const opts = Object.entries(q.options||{}).map(([k,v])=>
+    `<div class="opt ${isRight(q,k,v)?'right':''}">${k}. ${esc(v)}</div>`).join('');
+  const ev = (q.evidence||[]).map(e=>`<div class="ev">[${e.n}] ${esc(e.doc)}${e.page?' 第'+e.page+'页':''}（${e.score}）<br>${esc(e.text)}</div>`).join('');
+  return `<div class="q" data-id="${q.id||''}" data-index="${q.index||''}">
+    <div class="top"><span class="tag">${esc(q.type)}</span><span>第 ${q.index} 题</span>
+      <span class="conf">置信度 ${q.confidence??'-'}</span></div>
+    <div class="stem">${esc(q.stem)}</div>
+    ${opts}
+    <div class="ans">答案：<b>${esc(q.answer||'未确定')}</b>
+      ${q.needs_review?'<span class="warn">⚠️ 建议复核</span>':''}
+      ${q.reason?`<span style="color:var(--muted)"> · ${esc(q.reason)}</span>`:''}</div>
+    ${ev?`<details><summary>查看依据（${q.evidence.length}）</summary>${ev}</details>`:''}
+  </div>`;
+}
+
+function nearBottom(){ return window.innerHeight + window.scrollY > document.body.scrollHeight - 220; }
+
+function renderSummary(d){
+  $('#summary').innerHTML = d.total ? `
+    <span>题目 <b>${d.total}</b></span>
+    <span>平均置信度 <b>${d.avg_confidence}</b></span>
+    <span class="${d.needs_review?'warn':''}">需复核 <b>${d.needs_review}</b></span>
+    <span>批次 <b>${d.batches.length}</b></span>` : '';
+}
+
+function appendNew(items){
+  const list = $('#list');
+  if(list.querySelector('.empty')) list.innerHTML = '';
+  let firstNew = null;
+  for(const q of items){
+    if(known.has(q.id)) continue;
+    const div = document.createElement('div');
+    div.innerHTML = card(q);
+    const el = div.firstElementChild;
+    list.appendChild(el); known.add(q.id);
+    firstNew = firstNew || el;
+  }
+  if(firstNew){
+    requestAnimationFrame(()=>firstNew.classList.add('flash'));
+    setTimeout(()=>firstNew.classList.remove('flash'), 2600);
+    if(nearBottom()) window.scrollTo({top:document.body.scrollHeight, behavior:'smooth'});
+    else { $('#newtip').hidden = false; }
+  }
+}
+
+async function full(){
+  const d = await fetch('/api/items').then(r=>r.json());
+  all = d.items; lastSig = d.total + ':' + (d.latest||0);
+  lastLatest = d.latest || 0; lastTotal = d.total;
+  renderSummary(d);
+  if(!d.total){ $('#list').innerHTML = '<div class="empty">等待题目…</div>'; known.clear(); return; }
+  // 已有内容时走增量，避免整页重绘（保留滚动位置和已展开的依据）
+  if(known.size && d.total >= known.size){
+    appendNew(d.items);
+  }else{
+    known.clear(); $('#list').innerHTML = d.items.map(card).join('');
+    known = new Set(d.items.map(q=>q.id));
+  }
+  $('#meta').textContent = '更新 ' + new Date().toLocaleTimeString('zh-CN',{hour12:false});
+  $('#dot').classList.remove('err'); $('#dot').classList.add('ok');
+}
+
+async function poll(){
+  if(document.hidden) return;
+  try{
+    const b = await fetch('/api/items?brief=1').then(r=>r.json());
+    const sig = b.total + ':' + (b.latest||0);
+    if(sig !== lastSig){ await full(); }
+    else { $('#dot').classList.remove('err'); $('#dot').classList.add('ok'); }
+  }catch(e){ $('#dot').classList.remove('ok'); $('#dot').classList.add('err'); }
+}
+
+$('#newtip').onclick = () => { $('#newtip').hidden = true; window.scrollTo({top:document.body.scrollHeight, behavior:'smooth'}); };
+full().catch(e=>{ $('#list').innerHTML = '<div class="empty bad">读取失败：'+esc(e.message)+'</div>'; });
+setInterval(poll, 3000);
+</script>
+</body>
+</html>

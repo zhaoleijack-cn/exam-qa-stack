@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>知识库管理</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, 'Microsoft YaHei', sans-serif; background: #f5f6f8; color: #222; padding: 20px; }
+  .wrap { max-width: 860px; margin: 0 auto; }
+  h1 { font-size: 22px; margin-bottom: 14px; }
+  .card { background: #fff; border-radius: 10px; padding: 18px; margin-bottom: 16px; box-shadow: 0 1px 4px rgba(0,0,0,.06); }
+  .card h2 { font-size: 15px; margin-bottom: 10px; color: #555; }
+  input, textarea, select, button { font-size: 14px; padding: 8px 10px; border: 1px solid #d0d3d9; border-radius: 6px; width: 100%; }
+  textarea { min-height: 110px; resize: vertical; }
+  button { background: #2563eb; color: #fff; border: none; cursor: pointer; width: auto; padding: 8px 18px; }
+  button.gray { background: #6b7280; }
+  button:hover { opacity: .9; }
+  .row { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; align-items: center; }
+  .row > * { flex: 1; min-width: 140px; }
+  .row > button { flex: 0 0 auto; }
+  label { font-size: 13px; color: #666; display: block; margin: 6px 0 4px; }
+  #msg { position: fixed; top: 14px; right: 14px; padding: 10px 16px; border-radius: 8px; color: #fff; display: none; z-index: 9; max-width: 60%; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid #eee; }
+  th { color: #888; font-weight: 500; }
+  .hit { border-left: 3px solid #2563eb; padding: 8px 10px; margin: 8px 0; background: #f8fafc; border-radius: 6px; }
+  .hit b { color: #2563eb; }
+  .del { color: #dc2626; cursor: pointer; border: none; background: none; font-size: 13px; padding: 2px 6px; }
+  .muted { color: #999; font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>📚 知识库管理</h1>
+
+  <div class="card">
+    <h2>连接</h2>
+    <div class="row">
+      <div><label>API 密钥（保存在本浏览器）</label><input id="key" type="password" placeholder="kbk_..."></div>
+      <div style="flex:0 0 auto"><button onclick="saveKey()">保存密钥</button></div>
+    </div>
+    <div class="row">
+      <div><label>知识库（dataset）</label><select id="ds" onchange="dsChanged()"></select></div>
+      <div><label>或新建库名（小写字母/数字/下划线）</label><input id="newds" placeholder="例如：rule_2026" oninput="updateTarget()"></div>
+      <div style="flex:0 0 auto"><button class="gray" onclick="loadAll()">刷新</button></div>
+    </div>
+    <div id="target" style="font-size:13px;margin-top:8px;"></div>
+<div class="muted">各库文件独立存储，互不影响。</div>
+  </div>
+
+  <div class="card">
+    <h2>① 上传文件（pdf / docx / txt / md）</h2>
+    <div class="row">
+      <input id="file" type="file" accept=".pdf,.docx,.txt,.md">
+      <div><label>标题（默认文件名）</label><input id="ftitle" placeholder="可选"></div>
+    </div>
+    <button onclick="upload()">上传并入库</button>
+  </div>
+
+  <div class="card">
+    <h2>② 粘贴文本</h2>
+    <label>标题</label><input id="ttitle" placeholder="例如：2026年三季度合规通报">
+    <label>正文</label><textarea id="ttext" placeholder="粘贴要入库的资料全文…"></textarea>
+    <button onclick="addText()">文本入库</button>
+  </div>
+
+  <div class="card">
+    <h2>③ 检索测试</h2>
+    <div class="row">
+      <input id="q" placeholder="输入检索问题，回车或点按钮">
+      <div style="flex:0 0 auto"><button onclick="doSearch()">检索</button></div>
+    </div>
+    <div id="hits"></div>
+  </div>
+
+  <div class="card">
+    <h2>④ 当前库的文档</h2>
+    <table id="docs"><tr><th>标题</th><th>块数</th><th>录入时间</th><th></th></tr></table>
+  </div>
+</div>
+<div id="msg"></div>
+<script>
+const $ = id => document.getElementById(id);
+const key = () => localStorage.getItem('kbkey') || '';
+function msg(t, ok) { const m = $('msg'); m.textContent = t; m.style.background = ok ? '#16a34a' : '#dc2626'; m.style.display = 'block'; setTimeout(() => m.style.display = 'none', 3500); }
+function saveKey() { localStorage.setItem('kbkey', $('key').value.trim()); msg('密钥已保存', true); loadAll(); updateTarget(); }
+async function api(path, opt) {
+  const r = await fetch(path, Object.assign({ headers: Object.assign({ 'X-API-Key': key() }, opt && opt.body && !(opt.body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}) }, opt));
+  if (!r.ok) { const t = await r.text(); throw new Error(r.status + ' ' + t.slice(0, 120)); }
+  return r.json();
+}
+function curDs() { return newds.value.trim() || ds.value; }
+function dsChanged() { document.getElementById('newds').value = ''; loadDocs(); updateTarget(); }
+function updateTarget() { const d = curDs(); document.getElementById('target').innerHTML = d ? ('录入与检索将作用于: <b style="color:#2563eb">' + d + '</b>' + (document.getElementById('newds').value.trim() ? '（新库，首次入库时自动创建）' : '')) : '（未选择知识库）'; }
+async function loadAll() {
+  if (!key()) { $('key').focus(); return; }
+  try {
+    const dss = (await api('/datasets')).datasets;
+    const sel = $('ds'); sel.innerHTML = '';
+    dss.forEach(d => { const o = document.createElement('option'); o.value = d.dataset; o.textContent = d.dataset + '（' + d.chunks + ' 块）'; sel.appendChild(o); });
+    await loadDocs(); updateTarget();
+  } catch (e) { msg('加载失败: ' + e.message, false); }
+}
+async function loadDocs() {
+  const ds = curDs(); if (!ds) return;
+  const d = await api('/documents/' + ds);
+  const tb = $('docs'); tb.innerHTML = '<tr><th>标题</th><th>块数</th><th>录入时间</th><th></th></tr>';
+  (d.documents || []).forEach(x => {
+    const tr = document.createElement('tr');
+    const t = new Date(x.created_at * 1000);
+    tr.innerHTML = '<td>' + x.title + '</td><td>' + x.chunks + '</td><td class="muted">' + t.toLocaleString('zh-CN') + '</td>' +
+                   '<td><button class="del" onclick="del(\'' + x.doc_id + '\')">删除</button></td>';
+    tb.appendChild(tr);
+  });
+}
+async function upload() {
+  const f = $('file').files[0]; if (!f) return msg('先选文件', false);
+  const fd = new FormData(); fd.append('file', f); fd.append('dataset', curDs());
+  if ($('ftitle').value) fd.append('title', $('ftitle').value);
+  try { const r = await api('/ingest/file', { method: 'POST', body: fd }); msg('已入库: ' + r.title + '（' + r.chunks + ' 块）', true); document.getElementById('newds').value = ''; loadAll(); }
+  catch (e) { msg('失败: ' + e.message, false); }
+}
+async function addText() {
+  if (!$('ttext').value.trim() || !$('ttitle').value.trim()) return msg('标题和正文都要填', false);
+  try { const r = await api('/ingest/text', { method: 'POST', body: JSON.stringify({ dataset: curDs(), title: $('ttitle').value, text: $('ttext').value }) }); msg('已入库（' + r.chunks + ' 块）', true); document.getElementById('ttext').value = ''; document.getElementById('newds').value = ''; loadAll(); }
+  catch (e) { msg('失败: ' + e.message, false); }
+}
+async function doSearch() {
+  const q = $('q').value.trim(); if (!q) return;
+  $('hits').innerHTML = '检索中…';
+  try {
+    const r = await api('/search', { method: 'POST', body: JSON.stringify({ query: q, dataset: curDs(), top_k: 5 }) });
+    $('hits').innerHTML = r.results.length ? r.results.map(x =>
+      '<div class="hit"><b>' + (x.score * 1).toFixed(3) + '</b> · ' + x.title + '<div>' + x.text.slice(0, 200) + '…</div></div>').join('') : '（无命中）';
+  } catch (e) { $('hits').textContent = '失败: ' + e.message; }
+}
+async function del(id) {
+  if (!confirm('确定删除该文档？')) return;
+  try { await api('/documents/' + curDs() + '/' + id, { method: 'DELETE' }); msg('已删除', true); loadAll(); }
+  catch (e) { msg('失败: ' + e.message, false); }
+}
+$('key').value = key();
+if (key()) loadAll(); else updateTarget();
+</script>
+</body>
+</html>

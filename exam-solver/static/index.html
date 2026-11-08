@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>试题答题 · 全部答案</title>
+<style>
+:root{--bg:#f4f6f9;--card:#fff;--line:#e5e8ee;--text:#1f2430;--muted:#7b8496;
+--blue:#2563eb;--blue-soft:#eef4ff;--green:#16a34a;--red:#dc2626;--amber:#d97706}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--text)}
+header{display:flex;align-items:center;gap:12px;padding:14px 22px;background:#fff;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:10}
+header h1{margin:0;font-size:16px;font-weight:600}
+header .dot{width:8px;height:8px;border-radius:50%;background:#cbd5e1}
+header .dot.ok{background:var(--green)}
+header .meta{margin-left:auto;color:var(--muted);font-size:12px}
+.wrap{max-width:1080px;margin:0 auto;padding:18px;display:flex;flex-direction:column;gap:16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+.card h2{font-size:14px;margin:0 0 12px;font-weight:600;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.card h2 .count{color:var(--muted);font-weight:400;font-size:12px}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+select,input[type=number]{font:inherit;border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:#fff;outline:none}
+select:focus{border-color:var(--blue);box-shadow:0 0 0 3px var(--blue-soft)}
+.drop{border:1.5px dashed #c9d2e0;border-radius:10px;padding:22px;text-align:center;color:var(--muted);cursor:pointer;background:#fbfcfe;transition:.15s}
+.drop:hover,.drop.over{border-color:var(--blue);background:var(--blue-soft);color:var(--blue)}
+.drop b{color:var(--text)}
+.drop .fmts{font-size:12px;margin-top:6px}
+.thumbs{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.thumbs img{width:88px;height:62px;object-fit:cover;border-radius:6px;border:1px solid var(--line)}
+button.primary{background:var(--blue);color:#fff;border:0;border-radius:8px;padding:9px 18px;cursor:pointer;font-weight:500}
+button.primary:disabled{opacity:.55;cursor:not-allowed}
+button.ghost{background:#fff;border:1px solid var(--line);border-radius:8px;padding:8px 12px;cursor:pointer;font-size:13px}
+button.ghost:hover{border-color:#c9d2e0}
+.summary{display:flex;gap:20px;flex-wrap:wrap;font-size:13px;color:var(--muted);margin-bottom:10px}
+.summary b{color:var(--text);font-size:15px}
+.q{border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:12px;background:#fff;transition:box-shadow .5s,background .5s}
+.q.flash{background:#fffbea;box-shadow:0 0 0 3px #fde68a}
+.q .top{display:flex;gap:8px;align-items:center;color:var(--muted);font-size:12px;margin-bottom:6px;flex-wrap:wrap}
+.q .tag{padding:1px 7px;border-radius:999px;background:#f1f5f9;color:#475569}
+.q .stem{font-weight:600;margin:2px 0 10px;line-height:1.7}
+.opt{padding:5px 9px;border-radius:6px;margin:3px 0;color:#374151}
+.opt.right{background:#eaf7ee;color:#15803d;font-weight:600}
+.ans{margin-top:6px;font-size:13px}
+.ans b{color:var(--blue);font-size:15px}
+.warn{color:var(--amber);font-size:12px}
+.bad{color:var(--red)}
+.conf{font-variant-numeric:tabular-nums;margin-left:auto}
+details{margin-top:8px;font-size:12px;color:var(--muted)}
+details summary{cursor:pointer}
+.ev{border-left:2px solid var(--line);padding-left:8px;margin:6px 0}
+.del{border:0;background:none;color:#bcc5d3;cursor:pointer;font-size:15px;padding:0 4px;line-height:1}
+.del:hover{color:var(--red)}
+.empty{color:var(--muted);text-align:center;padding:22px}
+.spin{display:inline-block;width:12px;height:12px;border:2px solid #c7d2fe;border-top-color:var(--blue);border-radius:50%;animation:s 1s linear infinite;vertical-align:-2px;margin-right:6px}
+@keyframes s{to{transform:rotate(360deg)}}
+.preview{border:1px dashed #c9d2e0;border-radius:10px;padding:12px;margin-bottom:14px;background:#fbfcfe}
+.preview .ph{font-size:12px;color:var(--muted);margin-bottom:8px}
+</style>
+</head>
+<body>
+<header>
+  <span class="dot" id="dot"></span><h1>试题答题</h1>
+  <span class="meta">OCR · 检索 · 生成 · 增量清单</span>
+</header>
+
+<div class="wrap">
+  <section class="card">
+    <h2>上传试题照片</h2>
+    <div class="row">
+      <select id="ds" style="min-width:250px"></select>
+      <label style="color:var(--muted);font-size:13px">本次答题模型
+        <select id="solve_model" style="width:auto;min-width:190px"></select>
+      </label>
+      <label style="color:var(--muted);font-size:13px">并发
+        <input type="number" id="conc" value="5" min="1" max="10" style="width:60px">
+      </label>
+      <button class="ghost" id="ocrOnly">仅识别（不入清单）</button>
+      <button class="ghost" id="camBtn">📷 拍照即答</button>
+      <button class="primary" id="go">识别并作答</button>
+      <input type="file" id="camera" accept="image/*" capture="environment" hidden>
+    </div>
+    <div class="drop" id="drop" style="margin-top:12px">
+      <div><b>点击或拖拽试题照片</b></div>
+      <div class="fmts">JPG / PNG，可多张、可多次上传；已录入的图片会自动跳过</div>
+    </div>
+    <input type="file" id="file" accept="image/*" multiple hidden>
+    <div class="thumbs" id="thumbs"></div>
+  </section>
+
+  
+<section class="card">
+  <h2>⚙️ 模型配置（LLM 调用地址 / Key / 模型名）</h2>
+  <div id="llmList" style="margin-bottom:10px">加载中…</div>
+  <details id="lmform">
+    <summary style="cursor:pointer;color:#2563eb">＋ 添加模型</summary>
+    <div style="margin-top:8px">
+      <label>名称</label><input id="lm_name" style="width:100%" placeholder="例如：火山plan / DeepSeek官方 / OpenAI">
+      <label>调用地址（API 根地址）</label><input id="lm_url" style="width:100%" placeholder="https://ark.cn-beijing.volces.com/api/plan/v3">
+      <label>API Key</label><input id="lm_key" type="password" style="width:100%">
+      <label>用途</label><select id="lm_role" style="width:100%"><option value="answer">答题模型（回答试题）</option><option value="ocr">识图模型（读试题照片，需视觉能力）</option></select>
+      <label>模型名</label><input id="lm_model" style="width:100%" placeholder="例如：deepseek-v4.1-flash">
+      <label style="display:flex;align-items:center;gap:6px"><input id="lm_active" type="checkbox" style="width:auto"> 保存后设为当前使用</label>
+      <button id="lm_save" onclick="llmSave()">保存模型</button>
+    </div>
+  </details>
+</section>
+
+<section class="card">
+    <h2>全部试题与答案 <span class="count" id="count"></span>
+      <span style="margin-left:auto" class="row">
+        <button class="ghost" id="copyMd">复制 Markdown</button>
+        <button class="ghost" id="download">导出 JSON</button>
+        <button class="ghost" id="clear" style="color:var(--red)">清空</button>
+      </span>
+    </h2>
+    <div class="summary" id="summary"></div>
+    <div id="preview"></div>
+    <div id="list"><div class="empty">还没有试题，先上传照片</div></div>
+  </section>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+let files = [], all = [];
+
+async function j(url, opt){ const r = await fetch(url, opt); if(!r.ok) throw new Error((await r.json().catch(()=>({}))).detail || r.statusText); return r.json(); }
+const esc = s => (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+j('/api/datasets').then(list => {
+  $('#ds').innerHTML = list.length ? list.map(d=>`<option value="${d.id}">${esc(d.name)}（${d.chunks} 块）</option>`).join('')
+    : '<option value="">没有可用知识库</option>';
+}).catch(()=>{ $('#ds').innerHTML='<option value="">读取知识库失败</option>'; });
+fetch('/healthz').then(r=>r.json()).then(d=>$('#dot').classList.toggle('ok', !!(d.ok && d.keys.ark))).catch(()=>{});
+
+$('#drop').onclick = () => $('#file').click();
+$('#file').onchange = () => addFiles($('#file').files);
+['dragover','dragleave','drop'].forEach(ev => $('#drop').addEventListener(ev, e => {
+  e.preventDefault(); $('#drop').classList.toggle('over', ev==='dragover');
+  if(ev==='drop') addFiles(e.dataTransfer.files);
+}));
+function addFiles(list){
+  files = [...list].filter(f=>f.type.startsWith('image/'));
+  $('#thumbs').innerHTML = files.map(f=>`<img src="${URL.createObjectURL(f)}">`).join('');
+}
+
+function card(q, showDel){
+  const opts = Object.entries(q.options||{}).map(([k,v])=>
+    `<div class="opt ${(q.answer||'').includes(k)?'right':''}">${k}. ${esc(v)}</div>`).join('');
+  const ev = (q.evidence||[]).map(e=>`<div class="ev">[${e.n}] ${esc(e.doc)}${e.page?' 第'+e.page+'页':''}（${e.score}）<br>${esc(e.text)}</div>`).join('');
+  return `<div class="q" data-id="${q.id||''}">
+    <div class="top"><span class="tag">${esc(q.type)}</span><span>第 ${q.index} 题</span>
+      <span style="color:#b6bfcc;font-size:11px">${esc(q.image_name||'')}</span>
+      <span class="conf">置信度 ${q.confidence??'-'}</span>
+      ${showDel?'<button class="del" title="删除">×</button>':''}</div>
+    <div class="stem">${esc(q.stem)}</div>
+    ${opts}
+    <div class="ans">答案：<b>${esc(q.answer||'未确定')}</b>
+      ${q.needs_review?'<span class="warn">⚠️ 建议复核</span>':''}
+      ${q.reason?`<span style="color:var(--muted)"> · ${esc(q.reason)}</span>`:''}</div>
+    ${ev?`<details><summary>查看依据（${q.evidence.length}）</summary>${ev}</details>`:''}
+  </div>`;
+}
+
+let lastSig = '';
+async function load(){
+  const d = await j('/api/items');
+  all = d.items;
+  lastSig = d.total + ':' + (d.latest||0);
+  $('#count').textContent = d.total ? `共 ${d.total} 题 · ${d.batches.length} 批` : '';
+  $('#summary').innerHTML = d.total ? `
+    <span>题目 <b>${d.total}</b></span>
+    <span>平均置信度 <b>${d.avg_confidence}</b></span>
+    <span class="${d.needs_review?'warn':''}">需复核 <b>${d.needs_review}</b></span>` : '';
+  if(!d.total){ $('#list').innerHTML = '<div class="empty">还没有试题，先上传照片</div>'; return; }
+  $('#list').innerHTML = d.items.map(q => card(q, true)).join('');
+  $('#list').querySelectorAll('.q').forEach(el => {
+    const b = el.querySelector('.del');
+    if(b) b.onclick = async () => {
+      if(!confirm('删除这道题？')) return;
+      await j('/api/items/' + el.dataset.id, {method:'DELETE'});
+      load();
+    };
+  });
+}
+
+async function shrink(f, max=1600, q=0.86){
+  try{
+    const bmp = await createImageBitmap(f);
+    const s = Math.min(1, max / Math.max(bmp.width, bmp.height));
+    const c = document.createElement('canvas');
+    c.width = Math.round(bmp.width * s); c.height = Math.round(bmp.height * s);
+    c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+    return await new Promise(r => c.toBlob(r, 'image/jpeg', q));
+  }catch(e){ return f; }
+}
+
+async function run(onlyOcr, list){
+  const chosen = (list && list.length) ? list : files;
+  if(!chosen.length) return alert('请先选择试题照片');
+  const ds = $('#ds').value; if(!ds) return alert('请选择知识库');
+  const fd = new FormData();
+  for(const f of chosen){
+    const blob = await shrink(f);
+    const name = (f.name || 'photo').replace(/\.[^.]+$/, '') + '_' + Date.now() + '_' + Math.random().toString(36).slice(2,6) + '.jpg';
+    fd.append('files', blob, name);
+  }
+  fd.append('dataset_id', ds); fd.append('concurrency', $('#conc').value);
+  fd.append('model_id', $('#solve_model').value);
+  fd.append('only_ocr', onlyOcr ? 'true' : 'false');
+  const btn = onlyOcr ? $('#ocrOnly') : $('#go');
+  const label = btn.textContent;
+  btn.disabled = true; btn.innerHTML = '<span class="spin"></span>' + (onlyOcr?'识别中':'作答中');
+  if(onlyOcr) $('#preview').innerHTML = '<div class="empty"><span class="spin"></span>识别中…</div>';
+  else $('#list').innerHTML = '<div class="empty"><span class="spin"></span>正在识别并作答，题目多时约 10~30 秒</div>';
+  try{
+    const d = await j('/api/solve', {method:'POST', body:fd});
+    if(d.skipped && d.skipped.length) alert(`已跳过 ${d.skipped.length} 张重复图片`);
+    if(onlyOcr){
+      $('#preview').innerHTML = d.questions.length
+        ? `<div class="preview"><div class="ph">本次识别结果（未加入清单）</div>` +
+          d.questions.map((q,i)=>card({...q,index:i+1,image_name:q.image}, false)).join('') + '</div>'
+        : '<div class="empty">没有识别到题目</div>';
+      await load();
+    }else{
+      $('#preview').innerHTML = '';
+      await load();
+      if(d.batch && d.batch.added){
+        const added = all.slice(-d.batch.added).map(q=>q.id);
+        let hit = null;
+        document.querySelectorAll('#list .q').forEach(el=>{
+          if(added.includes(el.dataset.id)){ el.classList.add('flash'); hit = hit || el; }
+        });
+        if(hit) hit.scrollIntoView({behavior:'smooth', block:'center'});
+      }
+    }
+  }catch(e){
+    $('#list').innerHTML = `<div class="empty bad">失败：${esc(e.message)}</div>`;
+  }finally{ btn.disabled=false; btn.textContent=label; }
+}
+
+$('#camBtn').onclick = () => $('#camera').click();
+$('#camera').onchange = () => { const l = [...$('#camera').files]; $('#camera').value=''; if(l.length) run(false, l); };
+$('#go').onclick = () => run(false);
+$('#ocrOnly').onclick = () => run(true);
+$('#copyMd').onclick = async () => {
+  const md = await j('/api/markdown', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'});
+  await navigator.clipboard.writeText(md.markdown);
+  $('#copyMd').textContent='已复制'; setTimeout(()=>$('#copyMd').textContent='复制 Markdown',1500);
+};
+$('#download').onclick = () => {
+  const blob = new Blob([JSON.stringify({items:all}, null, 2)], {type:'application/json'});
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = `answers_${Date.now()}.json`; a.click();
+};
+$('#clear').onclick = async () => {
+  if(!all.length) return;
+  if(!confirm(`清空全部 ${all.length} 道题？不可恢复`)) return;
+  if(prompt('不可恢复！请输入「确认」两个字继续：') !== '确认') return;
+  await j('/api/clear', {method:'POST'});
+  load();
+};
+load();
+
+// 其他设备（手机）上传后，电脑端自动同步
+setInterval(async () => {
+  if(document.hidden) return;
+  try{
+    const b = await j('/api/items?brief=1');
+    const sig = b.total + ':' + (b.latest||0);
+    if(sig !== lastSig){ lastSig = sig; load(); }
+  }catch(e){}
+}, 3000);
+
+const gid = id => document.getElementById(id);
+let editing = null;
+function openForm(){ document.getElementById('lmform').open = true; }
+async function llmLoad(){
+  try{
+    const d = await j('/api/llm/models');
+    const groups = [['answer','答题模型（回答试题）'], ['ocr','识图模型（读试题照片，需视觉能力）']];
+    const actA = (d.answer || []).find(m => m.active);
+    const actO = (d.ocr || []).find(m => m.active);
+    const total = (d.answer || []).length + (d.ocr || []).length;
+    let h = '<div style="background:#eef2ff;border-radius:8px;padding:8px 10px;margin-bottom:10px;font-size:13px">当前生效 — 答题: <b style="color:#2563eb">' + (actA ? actA.name : '环境默认') + '</b>　识图: <b style="color:#2563eb">' + (actO ? actO.name : '环境默认') + '</b>' + (total <= 1 ? '　<span style="color:#b45309">（仅一条配置：点「＋ 添加模型」增加备选后即可互相切换）</span>' : '') + '</div>';
+    for (const g of groups) {
+      const role = g[0], label = g[1];
+      const list = d[role] || [];
+      h += '<div style="font-weight:600;margin:10px 0 4px">' + label + '</div>';
+      if (!list.length) h += '<div style="color:#999;font-size:12px">（暂无）</div>';
+      list.forEach(m => {
+        h += '<div style="display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid #eee;flex-wrap:wrap">' +
+          '<b>' + (m.active ? '\u2705 ' : '') + m.name + '</b>' +
+          '<span style="color:#888;font-size:12px">' + m.model + '</span>' +
+          '<span style="flex:1"></span>' +
+          (m.active ? '' : '<button data-role="' + role + '" data-id="' + m.id + '" onclick="llmActive(this.dataset.role, this.dataset.id)">设为生效</button>') +
+          '<button data-role="' + role + '" data-id="' + m.id + '" onclick="llmEdit(this.dataset.role, this.dataset.id)">编辑</button>' +
+          '<button data-role="' + role + '" data-id="' + m.id + '" onclick="llmTest(this.dataset.role, this.dataset.id, this)">测试</button>' +
+          '<button data-role="' + role + '" data-id="' + m.id + '" onclick="llmDel(this.dataset.role, this.dataset.id)">删除</button></div>';
+      });
+    }
+    gid('llmList').innerHTML = h;
+    const sm = gid('solve_model');
+    if (sm) sm.innerHTML = (d.answer || []).map(m => '<option value="' + m.id + '"' + (m.active ? ' selected' : '') + '>' + m.name + '</option>').join('');
+  }catch(e){ gid('llmList').textContent = '加载失败: ' + e.message; }
+}
+async function llmSave(){
+  const body = {role: gid('lm_role').value, name: gid('lm_name').value,
+    base_url: gid('lm_url').value, model: gid('lm_model').value,
+    api_key: gid('lm_key').value, active: gid('lm_active').checked};
+  if (editing) body.id = editing.id;
+  try{
+    await j('/api/llm/models', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+    alert(editing ? '已更新' : '模型已保存');
+    editing = null; gid('lm_save').textContent = '保存模型';
+    ['lm_name','lm_url','lm_key','lm_model'].forEach(id => gid(id).value = '');
+    llmLoad();
+  }catch(e){ alert('失败: ' + e.message); }
+}
+async function llmEdit(role, mid){
+  try{
+    const m = await j('/api/llm/models/' + role + '/' + mid + '/raw');
+    editing = {role: role, id: mid};
+    gid('lm_role').value = role; gid('lm_name').value = m.name || '';
+    gid('lm_url').value = m.base_url || ''; gid('lm_key').value = m.api_key || '';
+    gid('lm_model').value = m.model || ''; gid('lm_active').checked = !!m.active;
+    gid('lm_save').textContent = '更新模型';
+    openForm(); gid('lm_name').focus();
+  }catch(e){ alert('读取失败: ' + e.message); }
+}
+async function llmActive(role, mid){
+  try{ await j('/api/llm/models/' + role + '/' + mid + '/active', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'});
+    llmLoad();
+  }catch(e){ alert('失败: ' + e.message); }
+}
+async function llmTest(role, mid, btn){
+  const old = btn.textContent; btn.textContent = '测试中…';
+  try{
+    const r = await j('/api/llm/models/' + role + '/' + mid + '/test', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'});
+    btn.textContent = '\u2713 ' + r.ms + 'ms';
+    setTimeout(() => btn.textContent = old, 4000);
+  }catch(e){ btn.textContent = '\u2717 失败'; }
+}
+async function llmDel(role, mid){
+  if(!confirm('删除该模型配置？')) return;
+  try{ await j('/api/llm/models/' + role + '/' + mid, {method:'DELETE'}); llmLoad(); }
+  catch(e){ alert('失败: ' + e.message); }
+}
+llmLoad();
+
+</script>
+</body>
+</html>

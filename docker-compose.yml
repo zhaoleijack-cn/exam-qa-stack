@@ -1,0 +1,44 @@
+name: exam
+
+services:
+  kb-service:
+    build: ./kb-service
+    image: exam/kb-service:latest
+    container_name: kb-service
+    restart: unless-stopped
+    ports:
+      - "${KB_PORT:-8090}:8090"
+    environment:
+      KB_DATA: /data
+    volumes:
+      - ./data/kb:/data
+
+  ocr-service:
+    build: ./ocr-service
+    image: exam/ocr-service:latest
+    container_name: ocr-service
+    restart: unless-stopped
+    ports:
+      - "${OCR_PORT:-8093}:8090"
+    env_file:
+      - .env
+
+  exam-solver:
+    build: ./exam-solver
+    image: exam/exam-solver:latest
+    container_name: exam-solver
+    restart: unless-stopped
+    depends_on:
+      - ocr-service
+      - kb-service
+    ports:
+      - "${SOLVER_PORT:-8092}:8092"
+    env_file:
+      - .env
+    environment:
+      # 容器间走内部网络，固定写死；宿主机端口用上面的变量调
+      OCR_URL: http://ocr-service:8090/ocr
+      KB_SERVICE: http://kb-service:8090
+      KB_DATA: /app/data
+    volumes:
+      - ./data/solver:/app/data

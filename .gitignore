@@ -1,0 +1,20 @@
+# 密钥与环境
+.env
+*.env
+!.env.example
+
+# 数据与状态
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# 日志与临时
+*.log
+*.bak*
+*.tgz

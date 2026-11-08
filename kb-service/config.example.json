@@ -1,0 +1,9 @@
+{
+  "api_key": "kbk_change-me-random-和.env里的KB_API_KEY一致",
+  "embed_url": "https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings",
+  "embed_token": "sk-你的DashScope密钥",
+  "embed_model": "text-embedding-v4",
+  "embed_dims": 1536,
+  "chunk_size": 800,
+  "chunk_overlap": 100
+}
