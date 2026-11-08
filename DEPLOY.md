@@ -83,7 +83,7 @@ curl -s -X POST localhost:8090/search \
 ## 五、模型配置
 
 - **答题模型**：登录答题页 → 「⚙️ 模型配置」卡 → 添加（名称 / 调用地址 / Key / 模型名 / 用途 answer｜ocr）→ 一键切换。未配置时回落到 `.env` 的 `HS_PLAN_API_KEY` + Ark plan 端点。
-- **OCR 识图模型**：同一张卡的 `ocr` 用途条目。⚠️ 当前 compose 只把 `llm_models.json` 挂在 solver 容器里，ocr-service 读的是 `/shared/llm_models.json`（未挂载），因此**线上以 `.env` 的 `HS_PLAN_API_KEY`/`OCR_MODEL` 为准**；要让网页里切换 OCR 模型生效，给 `ocr-service` 加一行 `volumes: - ./data/solver:/shared:ro` 并重建（文档下方「已知缺口」）。
+- **OCR 识图模型**：同一张卡的 `ocr` 用途条目。compose 已把 `./data/solver` 只读挂到 ocr-service 的 `/shared`，`SHARED_MODELS=/shared/llm_models.json`，所以网页里保存/切换 `ocr` 条目后**下一次识图立即生效**，不用重建容器；文件里没有启用的 ocr 条目时才回落到 `.env` 的 `HS_PLAN_API_KEY`/`OCR_MODEL`。
 - **向量模型**：`data/kb/config.json` 的 `embed_url/embed_token/embed_model/embed_dims`。换模型或维度 = 该库全部向量作废，必须重新录入。
 
 ## 六、升级 / 备份 / 回滚
@@ -133,6 +133,5 @@ SQLite 是 WAL 模式：**停容器后再拷**才是干净快照（停容器会�
 
 ## 十、已知缺口
 
-- `ocr-service` 未挂载 `/shared/llm_models.json`（见第五节），网页切换 OCR 模型暂不生效，实际用 `.env` 配置。
 - 向量检索是纯 COSINE 相似度，同义改写友好，但精确编号/条款号不如 BM25；需要时可加混合检索。
 - 没有内置用户体系，只有一个共享的 Basic Auth 账号；多人使用靠反代层再加鉴权。

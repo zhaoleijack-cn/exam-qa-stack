@@ -22,6 +22,11 @@ services:
       - "${OCR_PORT:-8093}:8090"
     env_file:
       - .env
+    environment:
+      # 与 solver 共用模型配置：网页「模型配置」里 role=ocr 的条目由此生效
+      SHARED_MODELS: /shared/llm_models.json
+    volumes:
+      - ./data/solver:/shared:ro
 
   exam-solver:
     build: ./exam-solver
