@@ -9,7 +9,7 @@
 ```
 试题照片 ─▶ exam-solver(8092) ─▶ ocr-service(8093→8090)   视觉模型读图出题
                 │
-                ├─▶ kb-service(8090)  检索：查询向量化 → SQLite 内比对
+                ├─▶ kb-service(8090)  检索：SQLite FTS5 全文 + HNSW 向量，RRF 混合
                 │        └─▶ DashScope text-embedding-v4（1536 维）
                 └─▶ 答题模型（网页「模型配置」卡管理，llm_models.json）
 ```
@@ -18,7 +18,7 @@
 |---|---|---|---|
 | exam-solver | 8092 | 答题 API + 上传页 `/` + 只读看板 `/live` | `./data/solver`（answers.db、llm_models.json） |
 | ocr-service | 8093（仅本机回环） | 图片 → 结构化题目 JSON（需视觉模型 key） | `./data/solver`（只读挂载，共享模型配置） |
-| kb-service | 8090 | 知识库：建库/录入/检索（`X-API-Key` 鉴权） | `./data/kb`（config.json、index.html、kb_*.db） |
+| kb-service | 8090 | 知识库：建库/录入/检索（`X-API-Key` 鉴权） | `./data/kb`（config.json、index.html、kb_*.db）+ `./data/kb/vec`（向量文件） |
 
 ## 快速开始
 

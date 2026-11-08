@@ -6,7 +6,8 @@ WORKDIR /data
 COPY requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -i ${PIP_INDEX} -r /tmp/requirements.txt
 
-COPY main.py index.html /app-src/
+COPY *.py /app-src/
+COPY index.html /app-src/index.html
 
 ENV PYTHONUNBUFFERED=1
 EXPOSE 8090

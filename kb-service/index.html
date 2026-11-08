@@ -69,6 +69,13 @@
     <h2>③ 检索测试</h2>
     <div class="row">
       <input id="q" placeholder="输入检索问题，回车或点按钮">
+      <div style="flex:0 0 auto;min-width:170px">
+        <select id="mode">
+          <option value="hybrid">混合检索（向量+全文）</option>
+          <option value="embedding">仅向量</option>
+          <option value="fulltext">仅全文</option>
+        </select>
+      </div>
       <div style="flex:0 0 auto"><button onclick="doSearch()">检索</button></div>
     </div>
     <div id="hits"></div>
@@ -138,9 +145,13 @@ async function doSearch() {
   const q = $('q').value.trim(); if (!q) return;
   $('hits').innerHTML = '检索中…';
   try {
-    const r = await api('/search', { method: 'POST', body: JSON.stringify({ query: q, dataset: curDs(), top_k: 5 }) });
-    $('hits').innerHTML = r.results.length ? r.results.map(x =>
-      '<div class="hit"><b>' + (x.score * 1).toFixed(3) + '</b> · ' + esc(x.title) + '<div>' + esc(x.text.slice(0, 200)) + '…</div></div>').join('') : '（无命中）';
+    const r = await api('/search', { method: 'POST', body: JSON.stringify({ query: q, dataset: curDs(), top_k: 5, mode: $('mode').value }) });
+    $('hits').innerHTML = r.results.length ? r.results.map(x => {
+      const rank = '向量 ' + (x.rank_vector || '-') + ' / 全文 ' + (x.rank_fulltext || '-') + ' · rrf ' + (x.rrf_score || 0).toFixed(4);
+      return '<div class="hit"><b>' + (x.score * 1).toFixed(3) + '</b> · ' + esc(x.title) +
+        ' <span class="muted">（' + esc(rank) + '）</span><div>' + esc(x.text.slice(0, 200)) + '…</div></div>';
+    }).join('') : '（无命中）';
+    msg('模式 ' + r.mode + '：向量命中 ' + r.vector_hits + ' / 全文命中 ' + r.fulltext_hits, true);
   } catch (e) { $('hits').textContent = '失败: ' + e.message; }
 }
 async function del(id) {

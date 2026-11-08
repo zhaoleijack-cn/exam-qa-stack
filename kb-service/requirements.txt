@@ -5,3 +5,4 @@ requests==2.34.2
 pypdf==7.0.0
 python-docx==1.2.0
 python-multipart==0.0.32
+usearch==2.26.6
