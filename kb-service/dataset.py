@@ -87,6 +87,14 @@ def migrate_legacy(path, vec_dir, name, cfg):
         finally:
             c.close()
 
+    for suffix in ('-wal', '-shm'):
+        stale = path + suffix
+        if os.path.exists(stale):
+            # 防御：换文件前清掉旧库遗留的 wal/shm，避免被 SQLite 误套到新库上
+            try:
+                os.unlink(stale)
+            except OSError:
+                pass
     os.replace(tmp_path, path)
     print('[migrate] %s: %d 文档 / %d 块 / %d 向量（%d 块无向量，仅全文可检索）'
           % (name, len(docs), len(chunks), len(vectors), skipped), flush=True)

@@ -13,25 +13,32 @@ VEC_RECALL = int(os.environ.get('VEC_RECALL', '80'))
 FTS_RECALL = int(os.environ.get('FTS_RECALL', '60'))
 MODE_DEFAULT = os.environ.get('SEARCH_MODE_DEFAULT', 'hybrid')
 MODES = ('embedding', 'fulltext', 'hybrid')
+EMBED_BATCH = int(os.environ.get('EMBED_BATCH', '64'))   # 单次请求的 input 上限，防大文档一批被上游拒
 
 
 
 def embed(texts, cfg):
-    """返回已 L2 归一化的向量矩阵；行数与输入一致。"""
-    r = requests.post(cfg['embed_url'], timeout=90,
-                      headers={'Authorization': 'Bearer ' + cfg.get('embed_token', '')},
-                      json={'model': cfg['embed_model'], 'input': list(texts),
-                            'dimensions': int(cfg.get('embed_dims', 1536))})
-    if r.status_code != 200:
-        raise RuntimeError('embedding HTTP %s: %s' % (r.status_code, r.text[:150]))
-    data = r.json()['data']
+    """返回已 L2 归一化的向量矩阵；行数与输入一致。分批请求，避免单批过大被上游拒绝。"""
+    if not len(texts):
+        return np.zeros((0, int(cfg.get('embed_dims', 1536))), dtype=np.float32)
     dims = int(cfg.get('embed_dims', 1536))
     out = [None] * len(texts)
-    for item in data:
-        v = np.array(item['embedding'], dtype=np.float32)
-        if len(v) != dims:
-            raise RuntimeError('embedding 维度 %d 与配置 %d 不一致' % (len(v), dims))
-        out[item['index']] = v
+    for start in range(0, len(texts), EMBED_BATCH):
+        part = list(texts[start:start + EMBED_BATCH])
+        r = requests.post(cfg['embed_url'], timeout=90,
+                          headers={'Authorization': 'Bearer ' + cfg.get('embed_token', '')},
+                          json={'model': cfg['embed_model'], 'input': part,
+                                'dimensions': dims})
+        if r.status_code != 200:
+            raise RuntimeError('embedding HTTP %s: %s' % (r.status_code, r.text[:150]))
+        data = r.json()['data']
+        if len(data) != len(part):
+            raise RuntimeError('embedding 返回条数不足（%d/%d）' % (len(data), len(part)))
+        for item in data:
+            v = np.array(item['embedding'], dtype=np.float32)
+            if len(v) != dims:
+                raise RuntimeError('embedding 维度 %d 与配置 %d 不一致' % (len(v), dims))
+            out[start + int(item['index'])] = v
     if any(v is None for v in out):
         raise RuntimeError('embedding 返回条数不足')
     mat = np.vstack(out)
@@ -60,7 +67,17 @@ def search(db, vec, query, top_k, min_score, mode, embedding_weight, cfg):
     q = (query or '').strip()
     if mode not in MODES:
         mode = MODE_DEFAULT
-    qv = None if mode == 'fulltext' else embed([q], cfg)[0]
+    qv, embed_err = None, None
+    if mode != 'fulltext':
+        try:
+            qv = embed([q], cfg)[0]
+        except Exception as e:
+            if mode == 'embedding':   # 显式要向量路的，如实报错
+                raise
+            # hybrid：embedding 故障时降级为仅全文，答题链路不至于整体不可用
+            embed_err = str(e)[:150]
+            print('[search] embedding 失败，hybrid 降级为仅全文: %s' % embed_err, flush=True)
+            mode = 'fulltext'
 
     vec_ranked, fts_ranked = [], []
     if mode in ('embedding', 'hybrid'):
@@ -93,11 +110,11 @@ def search(db, vec, query, top_k, min_score, mode, embedding_weight, cfg):
             continue
         if rec['vec'] is not None:
             score, score_type = round(rec['vec'], 4), 'vector'
-            if min_score and rec['vec'] < min_score:
-                continue
         else:
             # 仅全文命中：给一个 0~1 的弱可比分数，避免调用方把 BM25 原始分当余弦
             score, score_type = 0.5, 'fulltext'
+        if min_score and score < min_score:
+            continue    # 阈值对两路统一：仅全文命中占位 0.5 同样受 min_score 约束
         out.append({
             'title': row['title'],
             'dataset': getattr(db, 'name', ''),
@@ -110,4 +127,8 @@ def search(db, vec, query, top_k, min_score, mode, embedding_weight, cfg):
             'rank_vector': rec['rv'],
             'rank_fulltext': rec['rf'],
         })
-    return out, {'mode': mode, 'vector_hits': len(vec_ranked), 'fulltext_hits': len(fts_ranked)}
+    info = {'mode': mode, 'vector_hits': len(vec_ranked), 'fulltext_hits': len(fts_ranked)}
+    if embed_err:
+        info['degraded'] = True
+        info['embed_error'] = embed_err
+    return out, info

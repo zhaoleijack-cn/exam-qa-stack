@@ -82,6 +82,8 @@ class VectorStore:
         self.count = int(meta.get('count', 0)) if meta else 0
         self.capacity = int(meta.get('capacity', 0)) if meta else 0
         self.tombstones = int(meta.get('tombstones', 0)) if meta else 0
+        if not self.count and os.path.exists(self.npy_path):
+            self._recover_from_npy()
         if self.count and os.path.exists(self.npy_path):
             self.mat = np.load(self.npy_path, mmap_mode='r+')
             if self.mat.shape[0] < self.count or self.mat.shape[1] != self.dim:
@@ -99,6 +101,38 @@ class VectorStore:
                 except Exception as e:
                     print('[vec] %s 索引加载失败，将从 npy 重建: %s' % (self.name, e), flush=True)
                     self._rebuild_index()
+
+    def _recover_from_npy(self):
+        """meta.json 丢失/损坏时从 npy 推断规模，避免误清 vec_map 导致向量检索全灭。
+
+        npy 是 append-only 的向量源：有效行是连续前缀，未用容量为全零行（向量已 L2 归一，
+        模长 ~1，零行即空位）。墓碑数用 usearch 存活 key 数反推（remove 只动索引不动 npy）。
+        """
+        try:
+            probe = np.load(self.npy_path, mmap_mode='r')
+        except Exception as e:
+            print('[vec] %s npy 读取失败: %s' % (self.name, e), flush=True)
+            return
+        if probe.ndim != 2 or probe.shape[1] != self.dim:
+            print('[vec] %s npy 形状 %s 与 dim=%d 不符，跳过恢复' % (self.name, probe.shape, self.dim),
+                  flush=True)
+            return
+        norms = np.linalg.norm(np.asarray(probe, dtype=np.float32), axis=1)
+        nz = np.flatnonzero(norms > 1e-6)
+        count = int(nz[-1]) + 1 if len(nz) else 0
+        live = None
+        if count and os.path.exists(self.idx_path):
+            try:
+                idx = Index(ndim=self.dim, metric='ip', dtype='f32', path=self.idx_path, view=True)
+                live = len(idx)
+                del idx
+            except Exception as e:
+                print('[vec] %s 推断墓碑数时索引读取失败: %s' % (self.name, e), flush=True)
+        self.count = count
+        self.capacity = int(probe.shape[0])
+        self.tombstones = max(0, count - live) if live is not None else 0
+        print('[vec] %s meta 缺失，已按 npy 恢复：count=%d capacity=%d tombstones=%d'
+              % (self.name, self.count, self.capacity, self.tombstones), flush=True)
 
     def _ensure_capacity(self, need):
         if self.mat is not None and need <= self.capacity:
