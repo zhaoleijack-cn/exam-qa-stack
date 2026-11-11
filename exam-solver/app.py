@@ -235,17 +235,6 @@ def _mask(k):
     return (k[:6] + '...' + k[-4:]) if len(k) > 12 else '***'
 
 
-@app.patch('/api/items/{item_id}/type')
-def patch_item_type(item_id: str, body: dict):
-    """OCR 题型标错的人工修正入口：单选/多选/判断。"""
-    t = str(body.get('type') or '')
-    if t not in ('单选', '多选', '判断'):
-        raise HTTPException(400, '题型只允许 单选/多选/判断')
-    if store.set_item_type(item_id, t) == 0:
-        raise HTTPException(404, '题目不存在')
-    return {'ok': True, 'type': t}
-
-
 @app.get('/api/llm/models')
 def llm_list():
     models = config.llm_models()
