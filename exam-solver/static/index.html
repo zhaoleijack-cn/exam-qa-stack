@@ -155,7 +155,7 @@ function card(q, showDel){
     `<div class="opt ${(q.answer||'').includes(k)?'right':''}">${k}. ${esc(v)}</div>`).join('');
   const ev = (q.evidence||[]).map(e=>`<div class="ev">[${e.n}] ${esc(e.doc)}${e.page?' 第'+e.page+'页':''}（${e.score}）<br>${esc(e.text)}</div>`).join('');
   return `<div class="q" data-id="${q.id||''}">
-    <div class="top"><span class="tag">${esc(q.type)}</span><span>第 ${q.index} 题</span>
+    <div class="top"><select class="tag" onchange="setItemType('${q.id}', this.value)"><option ${q.type==='单选'?'selected':''}>单选</option><option ${q.type==='多选'?'selected':''}>多选</option><option ${q.type==='判断'?'selected':''}>判断</option></select><span>第 ${q.index} 题</span>
       <span style="color:#b6bfcc;font-size:11px">${esc(q.image_name||'')}</span>
       <span class="conf">置信度 ${q.confidence??'-'}</span>
       ${showDel?'<button class="del" title="删除">×</button>':''}</div>
@@ -356,6 +356,10 @@ async function llmTest(role, mid, btn){
 async function llmDel(role, mid){
   if(!confirm('删除该模型配置？')) return;
   try{ await j('/api/llm/models/' + role + '/' + mid, {method:'DELETE'}); llmLoad(); }
+  catch(e){ alert('失败: ' + e.message); }
+}
+async function setItemType(id, t){
+  try{ await j('/api/items/' + encodeURIComponent(id) + '/type', {method:'PATCH', body: JSON.stringify({type: t})}); alert('题型已改为 ' + t + '。勾选「重答已录图片」可按新题型重新作答'); }
   catch(e){ alert('失败: ' + e.message); }
 }
 llmLoad();

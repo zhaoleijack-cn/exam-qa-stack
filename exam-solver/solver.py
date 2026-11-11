@@ -46,7 +46,7 @@ def build_query(q):
 def format_context(hits):
     lines = []
     for i, h in enumerate(hits, 1):
-        body = re.sub(r'\s+', ' ', h['text'])[:420]
+        body = re.sub(r'\s+', ' ', h['text'])[:6000]  # 与 kb-service chunk_size 上限 6000 保持一致，块再大也不截
         src = f"{h['doc']}" + (f" 第{h['page']}页" if h.get('page') else '')
         lines.append(f'[{i}]（{src}）{body}')
     return '\n'.join(lines)
@@ -179,7 +179,7 @@ def answer_one(q, dataset, topk=10, verify_below=0.6, model_id=''):
         'options': q.get('options') or {}, 'answer': g['answer'],
         'confidence': round(g['confidence'], 2), 'reason': reason,
         'evidence': [{'n': n, **{k: hits[n - 1][k] for k in ('doc', 'page', 'score')},
-                      'text': hits[n - 1]['text'][:300]} for n in g['evidence']],
+                      'text': hits[n - 1]['text']} for n in g['evidence']],
         'top_score': best, 'needs_review': needs_review,
         'ms': {'total': round((time.time() - t0) * 1000), 'gen': g['ms']},
         '_raw': g['raw'],

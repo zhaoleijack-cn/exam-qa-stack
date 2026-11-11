@@ -126,6 +126,13 @@ def delete_item(item_id):
         c.execute('DELETE FROM items WHERE id=?', (item_id,))
 
 
+def set_item_type(item_id, t):
+    """OCR 题型标错的人工修正；返回受影响行数。"""
+    with conn() as c:
+        cur = c.execute('UPDATE items SET type=? WHERE id=?', (t, item_id))
+        return cur.rowcount
+
+
 def delete_batch(batch_id):
     with conn() as c:
         c.execute('DELETE FROM items WHERE batch_id=?', (batch_id,))
