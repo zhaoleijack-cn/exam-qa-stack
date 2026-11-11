@@ -167,6 +167,60 @@ class Dataset:
             self._maybe_compact()
             return {'doc_id': doc_id, 'title': title, 'chunks': len(chunks), 'vectors': len(labels)}
 
+    def list_chunks(self, doc_id):
+        return self.db.chunks_of(doc_id)
+
+    def delete_chunk(self, rowid):
+        label = self.db.label_of_rowid(rowid)
+        self.db.delete_chunk_row(rowid)
+        if label:
+            self.vec.remove([label])
+
+    def edit_chunk(self, rowid, text):
+        """FastGPT 式块编辑：换文字、重嵌入、向量索引原位替换（label 换新）。"""
+        with self.lock:
+            label = self.db.label_of_rowid(rowid)
+            if label:
+                self.vec.remove([label])
+                self.db.drop_vec_map_rowid(rowid)
+            self.db.update_chunk_text(rowid, text)
+            vecs = searchmod.embed([text], self.cfg)
+            labels = self.vec.append(vecs)
+            # replace_vec_map 期望 [(rowid, label)]
+            self.db.replace_vec_map([(rowid, labels[0])], self.model)
+            return len(text)
+
+    def merge_chunks(self, rowids):
+        """FastGPT 式手工合并：连续块合成一块（保留首块 rowid），重嵌入一次。"""
+        rowids = [int(r) for r in rowids]
+        if len(rowids) < 2:
+            raise ValueError('至少两个块')
+        infos = self.db.chunks_by_rowids(rowids)
+        if len(infos) != len(rowids):
+            raise ValueError('有块不存在')
+        doc_ids = {i['doc_id'] for i in infos}
+        if len(doc_ids) != 1:
+            raise ValueError('块必须属于同一文档')
+        idxs = [i['chunk_index'] for i in infos]
+        if idxs != list(range(idxs[0], idxs[0] + len(idxs))):
+            raise ValueError('块必须连续（按块序号）')
+        merged = '\n'.join(i['text'] for i in infos)
+        with self.lock:
+            labels = [self.db.label_of_rowid(r) for r in rowids]
+            live = [l for l in labels if l]
+            if live:
+                self.vec.remove(live)
+            for r in rowids:
+                self.db.drop_vec_map_rowid(r)
+            for r in rowids[1:]:
+                self.db.delete_chunk_row(r)
+            self.db.update_chunk_text(rowids[0], merged)
+            vecs = searchmod.embed([merged], self.cfg)
+            new_labels = self.vec.append(vecs)
+            # replace_vec_map 期望 [(rowid, label)]
+            self.db.replace_vec_map([(rowids[0], new_labels[0])], self.model)
+        return len(merged)
+
     def delete_document(self, doc_id):
         with self.lock:
             labels = self.db.delete_document(doc_id)

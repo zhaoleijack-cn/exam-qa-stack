@@ -13,7 +13,7 @@ VEC_RECALL = int(os.environ.get('VEC_RECALL', '80'))
 FTS_RECALL = int(os.environ.get('FTS_RECALL', '60'))
 MODE_DEFAULT = os.environ.get('SEARCH_MODE_DEFAULT', 'hybrid')
 MODES = ('embedding', 'fulltext', 'hybrid')
-EMBED_BATCH = int(os.environ.get('EMBED_BATCH', '64'))   # 单次请求的 input 上限，防大文档一批被上游拒
+EMBED_BATCH = int(os.environ.get('EMBED_BATCH', '10'))   # DashScope text-embedding-v3/v4 兼容模式单请求上限 10 条，超限返回 400
 
 
 

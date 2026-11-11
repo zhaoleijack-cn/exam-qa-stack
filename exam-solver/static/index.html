@@ -8,11 +8,14 @@
 :root{--bg:#f4f6f9;--card:#fff;--line:#e5e8ee;--text:#1f2430;--muted:#7b8496;
 --blue:#2563eb;--blue-soft:#eef4ff;--green:#16a34a;--red:#dc2626;--amber:#d97706}
 *{box-sizing:border-box}
+html,body{overscroll-behavior-y:none}
 body{margin:0;font:14px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--text)}
 header{display:flex;align-items:center;gap:12px;padding:14px 22px;background:#fff;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:10}
 header h1{margin:0;font-size:16px;font-weight:600}
 header .dot{width:8px;height:8px;border-radius:50%;background:#cbd5e1}
 header .dot.ok{background:var(--green)}
+#fab{position:fixed;right:18px;bottom:24px;width:60px;height:60px;border-radius:50%;background:var(--blue);color:#fff;font-size:26px;border:none;box-shadow:0 4px 14px rgba(0,0,0,.28);cursor:pointer;z-index:99;display:flex;align-items:center;justify-content:center}
+#fab:active{transform:scale(.95)}
 header .meta{margin-left:auto;color:var(--muted);font-size:12px}
 .wrap{max-width:1080px;margin:0 auto;padding:18px;display:flex;flex-direction:column;gap:16px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
@@ -132,7 +135,8 @@ const esc = s => (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;
 j('/api/datasets').then(list => {
   $('#ds').innerHTML = list.length ? list.map(d=>`<option value="${d.id}">${esc(d.name)}（${d.chunks} 块）</option>`).join('')
     : '<option value="">没有可用知识库</option>';
-}).catch(()=>{ $('#ds').innerHTML='<option value="">读取知识库失败</option>'; });
+}).then(()=>{ const saved=localStorage.getItem('kbds'); if(saved) $('#ds').value=saved; }).catch(()=>{ $('#ds').innerHTML='<option value="">读取知识库失败</option>'; });
+$('#ds').onchange = () => localStorage.setItem('kbds', $('#ds').value);
 fetch('/healthz').then(r=>r.json()).then(d=>$('#dot').classList.toggle('ok', !!(d.ok && d.keys.ark))).catch(()=>{});
 
 $('#drop').onclick = () => $('#file').click();
@@ -306,6 +310,9 @@ async function llmLoad(){
     gid('llmList').innerHTML = h;
     const sm = gid('solve_model');
     if (sm) sm.innerHTML = (d.answer || []).map(m => '<option value="' + esc(m.id) + '"' + (m.active ? ' selected' : '') + '>' + esc(m.name) + '</option>').join('');
+    sm.onchange = () => localStorage.setItem('kbsm', sm.value);
+    const savedM = localStorage.getItem('kbsm');
+    if (savedM) sm.value = savedM;
   }catch(e){ gid('llmList').textContent = '加载失败: ' + e.message; }
 }
 async function llmSave(){
@@ -354,5 +361,6 @@ async function llmDel(role, mid){
 llmLoad();
 
 </script>
+<button id="fab" title="拍照即答" onclick="$('#camera').click()">📷</button>
 </body>
 </html>

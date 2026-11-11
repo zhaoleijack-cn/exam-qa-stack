@@ -296,6 +296,41 @@ class ContentDB:
                     rows = []
         return [(r[0], float(r[1])) for r in rows]
 
+    def chunks_of(self, doc_id):
+        with self.lock:
+            return [{'rowid': r[0], 'chunk_index': r[1], 'chars': r[2], 'text': r[3]}
+                    for r in self.db.execute(
+                        'SELECT rowid, chunk_index, length(text), text FROM chunks '
+                        'WHERE doc_id=? ORDER BY chunk_index', (doc_id,))]
+
+    def label_of_rowid(self, rowid):
+        with self.lock:
+            r = self.db.execute('SELECT label FROM vec_map WHERE rowid=?', (rowid,)).fetchone()
+            return r[0] if r else None
+
+    def drop_vec_map_rowid(self, rowid):
+        with self.lock, self.db:
+            self.db.execute('DELETE FROM vec_map WHERE rowid=?', (rowid,))
+
+    def update_chunk_text(self, rowid, text):
+        with self.lock, self.db:
+            self.db.execute('UPDATE chunks SET text=? WHERE rowid=?', (text, rowid))
+
+    def delete_chunk_row(self, rowid):
+        with self.lock, self.db:
+            self.db.execute('DELETE FROM vec_map WHERE rowid=?', (rowid,))
+            self.db.execute('DELETE FROM chunks WHERE rowid=?', (rowid,))
+
+    def chunks_by_rowids(self, rowids):
+        if not rowids:
+            return []
+        qs = ','.join('?' * len(rowids))
+        with self.lock:
+            return [{'rowid': r[0], 'doc_id': r[1], 'chunk_index': r[2], 'text': r[3]}
+                    for r in self.db.execute(
+                        'SELECT rowid, doc_id, chunk_index, text FROM chunks '
+                        'WHERE rowid IN (%s) ORDER BY chunk_index' % qs, list(rowids))]
+
     def close(self):
         with self.lock:
             self.db.close()

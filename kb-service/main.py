@@ -59,32 +59,60 @@ def get_store(dataset: str, create: bool = False) -> Optional[Dataset]:
 
 
 # ---------- 分块与解析 ----------
+def _split_sentences(line: str) -> List[str]:
+    """按句末标点切成完整句子；单句仍超 CHUNK_SIZE 的极端情况才带重叠硬切。"""
+    segs, buf = [], ''
+    for ch in line:
+        buf += ch
+        if ch in '。！？；!?':
+            if buf.strip():
+                segs.append(buf.strip())
+            buf = ''
+    if buf.strip():
+        segs.append(buf.strip())
+    out = []
+    for s in segs:
+        if len(s) <= CHUNK_SIZE:
+            out.append(s)
+        else:
+            start = 0
+            while start < len(s):
+                out.append(s[start:start + CHUNK_SIZE])
+                start += CHUNK_SIZE - CHUNK_OVERLAP
+    return [s for s in out if s]
+
+
 def chunk_text(text: str) -> List[str]:
+    """句子边界感知切块：任何块都不从句子中间开始/结束，相邻块保留一个完整句重叠。"""
     text = text.strip()
     if not text:
         return []
     if len(text) <= CHUNK_SIZE:
         return [text]
-    paras = [p.strip() for p in text.replace('\r\n', '\n').split('\n') if p.strip()]
+    segs = []
+    for line in text.replace('\r\n', '\n').split('\n'):
+        line = line.strip()
+        if not line:
+            continue
+        if len(line) <= CHUNK_SIZE:
+            segs.append(line)
+        else:
+            segs.extend(_split_sentences(line))
     chunks, cur = [], ''
-    for p in paras:
-        if len(cur) + len(p) + 1 <= CHUNK_SIZE:
-            cur = (cur + '\n' + p).strip()
+    for s in segs:
+        cand = (cur + '\n' + s) if cur else s
+        if len(cand) <= CHUNK_SIZE:
+            cur = cand
             continue
         if cur:
             chunks.append(cur)
-        if len(p) <= CHUNK_SIZE:
-            cur = p
-            continue
-        start = 0
-        while start < len(p):
-            chunks.append(p[start:start + CHUNK_SIZE])
-            start += CHUNK_SIZE - CHUNK_OVERLAP
-        cur = ''
+        tail = cur.split('\n')[-1] if cur else ''
+        cur = tail if 0 < len(tail) <= CHUNK_OVERLAP * 2 else ''
+        cand = (cur + '\n' + s) if cur else s
+        cur = cand if len(cand) <= CHUNK_SIZE else s
     if cur:
         chunks.append(cur)
     return chunks
-
 
 def parse_pdf(b):
     from pypdf import PdfReader
@@ -250,6 +278,76 @@ def documents(dataset: str, _: None = Depends(auth)):
     if ds is None:
         raise HTTPException(404, '知识库不存在')
     return {'documents': ds.documents()}
+
+
+@app.get('/documents/{dataset}/{doc_id}/chunks')
+def get_chunks(dataset: str, doc_id: str, _: None = Depends(auth)):
+    ds = get_store(dataset, create=False)
+    if ds is None:
+        raise HTTPException(404, '知识库不存在')
+    return {'doc_id': doc_id, 'chunks': ds.list_chunks(doc_id)}
+
+
+@app.put('/documents/{dataset}/chunk/{rowid}')
+def edit_chunk(dataset: str, rowid: int, body: dict, _: None = Depends(auth)):
+    text = str(body.get('text') or '').strip()
+    if not text:
+        raise HTTPException(400, '块内容不能为空')
+    ds = get_store(dataset, create=False)
+    if ds is None:
+        raise HTTPException(404, '知识库不存在')
+    chars = ds.edit_chunk(rowid, text)
+    return {'ok': True, 'chars': chars}
+
+
+@app.delete('/documents/{dataset}/chunk/{rowid}')
+def del_chunk(dataset: str, rowid: int, _: None = Depends(auth)):
+    ds = get_store(dataset, create=False)
+    if ds is None:
+        raise HTTPException(404, '知识库不存在')
+    ds.delete_chunk(rowid)
+    return {'ok': True}
+
+
+@app.post('/documents/{dataset}/merge-chunks')
+def merge_chunks(dataset: str, body: dict, _: None = Depends(auth)):
+    ds = get_store(dataset, create=False)
+    if ds is None:
+        raise HTTPException(404, '知识库不存在')
+    try:
+        chars = ds.merge_chunks(body.get('rowids') or [])
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {'ok': True, 'chars': chars}
+
+
+@app.get('/config')
+def get_cfg(_: None = Depends(auth)):
+    return {'chunk_size': CHUNK_SIZE, 'chunk_overlap': CHUNK_OVERLAP,
+            'embed_model': CFG.get('embed_model'), 'embed_dims': CFG.get('embed_dims')}
+
+
+@app.post('/config')
+def set_cfg(body: dict, _: None = Depends(auth)):
+    global CHUNK_SIZE, CHUNK_OVERLAP
+    try:
+        size = int(body.get('chunk_size', CHUNK_SIZE))
+        overlap = int(body.get('chunk_overlap', CHUNK_OVERLAP))
+    except Exception:
+        raise HTTPException(400, 'chunk_size/chunk_overlap 必须是整数')
+    size = max(200, min(6000, size))
+    overlap = max(0, min(size // 2, overlap))
+    CFG['chunk_size'] = size
+    CFG['chunk_overlap'] = overlap
+    # 原子写：config.json 含 api_key/embed_token，写一半损坏会导致下次启动 fail-closed
+    cfg_path = os.path.join(DATA_DIR, 'config.json')
+    tmp = cfg_path + '.tmp'
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(CFG, f, ensure_ascii=False, indent=1)
+    os.replace(tmp, cfg_path)
+    CHUNK_SIZE = size
+    CHUNK_OVERLAP = overlap
+    return {'ok': True, 'chunk_size': size, 'chunk_overlap': overlap}
 
 
 @app.delete('/documents/{dataset}/{doc_id}')

@@ -128,7 +128,7 @@ def generate(q, hits, retry=False, temperature=0, model_id=''):
             'raw': raw if not ok else '', 'ms': round((time.time() - t0) * 1000)}
 
 
-def answer_one(q, dataset, topk=6, verify_below=0.6, model_id=''):
+def answer_one(q, dataset, topk=10, verify_below=0.6, model_id=''):
     t0 = time.time()
     hits = []
     err = ''

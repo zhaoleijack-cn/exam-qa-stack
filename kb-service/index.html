@@ -41,7 +41,8 @@
       <div style="flex:0 0 auto"><button onclick="saveKey()">保存密钥</button></div>
     </div>
     <div class="row">
-      <div><label>知识库（dataset）</label><select id="ds" onchange="dsChanged()"></select></div>
+      <div><label>知识库（dataset）</label><select id="ds" onchange="dsChanged();localStorage.setItem('kbds',this.value)"></select></div>
+      <div><label>切块大小 / 重叠（只对新录入生效）</label><input id="csize" style="width:72px"> <input id="coverlap" style="width:72px"> <button onclick="saveCfg()" style="width:auto">保存</button></div>
       <div><label>或新建库名（小写字母/数字/下划线）</label><input id="newds" placeholder="例如：rule_2026" oninput="updateTarget()"></div>
       <div style="flex:0 0 auto"><button class="gray" onclick="loadAll()">刷新</button></div>
     </div>
@@ -84,6 +85,7 @@
   <div class="card">
     <h2>④ 当前库的文档</h2>
     <table id="docs"><tr><th>标题</th><th>块数</th><th>录入时间</th><th></th></tr></table>
+    <div id="chunksbox"></div>
   </div>
 </div>
 <div id="msg"></div>
@@ -107,6 +109,8 @@ async function loadAll() {
     const dss = (await api('/datasets')).datasets;
     const sel = $('ds'); sel.innerHTML = '';
     dss.forEach(d => { const o = document.createElement('option'); o.value = d.dataset; o.textContent = d.dataset + '（' + d.chunks + ' 块）'; sel.appendChild(o); });
+    const saved = localStorage.getItem('kbds');
+    if (saved) sel.value = saved;
     await loadDocs(); updateTarget();
   } catch (e) { msg('加载失败: ' + e.message, false); }
 }
@@ -123,9 +127,10 @@ async function loadDocs() {
   const tb = $('docs'); tb.innerHTML = '<tr><th>标题</th><th>块数</th><th>录入时间</th><th></th></tr>';
   (d.documents || []).forEach(x => {
     const tr = document.createElement('tr');
+    DOCS[x.doc_id] = x;
     const t = new Date(x.created_at * 1000);
     tr.innerHTML = '<td>' + esc(x.title) + '</td><td>' + esc(x.chunks) + '</td><td class="muted">' + t.toLocaleString('zh-CN') + '</td>' +
-                   '<td><button class="del" onclick="del(\'' + esc(x.doc_id) + '\')">删除</button></td>';
+                   '<td><button onclick="viewChunks(\'' + esc(x.doc_id) + '\')">查看块</button> <button class="del" onclick="del(\'' + esc(x.doc_id) + '\')">删除</button></td>';
     tb.appendChild(tr);
   });
 }
@@ -158,6 +163,53 @@ async function del(id) {
   if (!confirm('确定删除该文档？')) return;
   try { await api('/documents/' + curDs() + '/' + id, { method: 'DELETE' }); msg('已删除', true); loadAll(); }
   catch (e) { msg('失败: ' + e.message, false); }
+}
+window.DOCS = window.DOCS || {};
+async function loadCfg() {
+  try { const c = await api('/config'); $('csize').value = c.chunk_size; $('coverlap').value = c.chunk_overlap; } catch (e) {}
+}
+async function saveCfg() {
+  try { const r = await api('/config', { method: 'POST', body: JSON.stringify({ chunk_size: +$('csize').value, chunk_overlap: +$('coverlap').value }) });
+    msg('切块参数已保存：大小 ' + r.chunk_size + ' / 重叠 ' + r.chunk_overlap + '（对新录入生效）', true); }
+  catch (e) { msg('失败: ' + e.message, false); }
+}
+async function viewChunks(docId) {
+  const box = $('chunksbox');
+  box.innerHTML = '<div class="muted">加载块中…</div>';
+  try {
+    const r = await api('/documents/' + encodeURIComponent(curDs()) + '/' + docId + '/chunks');
+    const title = (DOCS[docId] || {}).title || docId;
+    box.innerHTML = '<h4 style="margin:10px 0 6px">切块预览：' + esc(title) + '（' + r.chunks.length + ' 块；可编辑/删除，保存后自动重新向量化）</h4>' +
+      (r.chunks.map((c, ci) =>
+        '<details style="margin:4px 0;border-bottom:1px solid #eee;padding-bottom:4px"><summary>块 ' + (c.chunk_index + 1) + '（' + c.chars + ' 字）</summary>' +
+        '<textarea id="ck' + c.rowid + '" style="width:100%;height:110px;font-size:13px">' + esc(c.text) + '</textarea>' +
+        '<div style="margin-top:4px"><button onclick="saveChunk(' + c.rowid + ',\'' + docId + '\')">保存此块</button> ' +
+        '<button onclick="mergeChunk(' + c.rowid + ',' + (r.chunks[ci + 1] ? r.chunks[ci + 1].rowid : 'null') + ',\'' + docId + '\')"' + (r.chunks[ci + 1] ? '' : ' disabled') + '>与下一块合并</button> ' + '<button class="del" onclick="delChunk(' + c.rowid + ',\'' + docId + '\')">删除此块</button></div></details>'
+      ).join('') || '（无块）');
+  } catch (e) { box.innerHTML = '加载失败: ' + e.message; }
+}
+async function saveChunk(rowid, docId) {
+  try {
+    await api('/documents/' + encodeURIComponent(curDs()) + '/chunk/' + rowid,
+              { method: 'PUT', body: JSON.stringify({ text: document.getElementById('ck' + rowid).value }) });
+    msg('块已保存并重新向量化', true);
+  } catch (e) { msg('失败: ' + e.message, false); }
+}
+async function mergeChunk(rowid, nextRowid, docId) {
+  if (!nextRowid) return;
+  if (!confirm('把该块与下一块合并为一块？（文字拼接后重新向量化）')) return;
+  try {
+    const r = await api('/documents/' + encodeURIComponent(curDs()) + '/merge-chunks',
+              { method: 'POST', body: JSON.stringify({ rowids: [rowid, nextRowid] }) });
+    msg('已合并为一块（' + r.chars + ' 字），向量已更新', true); viewChunks(docId);
+  } catch (e) { msg('失败: ' + e.message, false); }
+}
+async function delChunk(rowid, docId) {
+  if (!confirm('确定删除该块？其向量同步移除。')) return;
+  try {
+    await api('/documents/' + encodeURIComponent(curDs()) + '/chunk/' + rowid, { method: 'DELETE' });
+    msg('块已删除', true); viewChunks(docId);
+  } catch (e) { msg('失败: ' + e.message, false); }
 }
 $('key').value = key();
 if (key()) loadAll(); else updateTarget();

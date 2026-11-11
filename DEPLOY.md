@@ -75,7 +75,9 @@ data/kb/
 - **全文检索**：FTS5 `trigram` 分词（中文按 3 字窗口），BM25 排序；查询先按精确片段匹配，全部落空再退化为 3 字滑窗（照顾用户改写）；整句都是 2 字短词时会拼成 3 字滑窗兜底。**单个少于 3 字的词（如「灾备」）无法匹配 trigram**，这类短查询只走向量。
 - **索引自愈**：`.usearch` 缺失或损坏时启动自动用 `.npy` 重建；`meta.json` 丢失时按 `.npy` 非零前缀行推断规模、按索引存活数反推墓碑并继续服务（`count/capacity/tombstones` 无需重算 embedding）；`/health` 的 `vectors` 是活跃向量数（不含墓碑）。
 - **故障降级**：`hybrid` 模式下 embedding 服务故障时自动降级为仅全文（响应带 `degraded: true` 与 `embed_error`），答题链路不因 embedding 抖动整体不可用；显式 `mode=embedding` 仍如实报错。
-- **embedding 分批**：入库按 `EMBED_BATCH`（默认 64）分批请求，大文档不会因单批过大被上游拒绝。
+- **embedding 分批**：入库按 `EMBED_BATCH`（默认 10，DashScope 兼容模式单请求上限）分批请求，大文档不会因单批过大被上游拒绝。
+- **句子感知切块**：录入按完整句子切分（一句话不会跨两块），相邻块自动保留一个完整句重叠；切块大小/重叠可在管理页调（`GET/POST /config`，写回 config.json，只对新录入生效，范围 200–6000）。
+- **块级管理（FastGPT 式）**：管理页「查看块」可编辑/删除/合并相邻块，或走 API `GET /documents/{库}/{文档id}/chunks`、`PUT|DELETE /documents/{库}/chunk/{rowid}`、`POST /documents/{库}/merge-chunks`——改动即时重新向量化，无需重录整篇。
 - **融合**：RRF（`RRF_K=60`），默认向量:全文 = 0.5:0.5（`HYBRID_EMBED_WEIGHT` 可调，单次请求也能传 `embedding_weight`）。返回的 `score` 仍是向量余弦（仅全文命中的是 0.5 占位），融合排序看 `rrf_score`、`rank_vector`、`rank_fulltext`；`min_score` 对两路统一生效（仅全文命中的占位分同样受阈值约束）。
 - **升级到 v3 会自动迁移**：首次启动检测到旧库（`chunks` 表里有 `embedding` 列）就地迁移，原库备份为 `kb_xxx.db.pre-vecsplit-<时间戳>`；665 块的库约 2 秒，**不需要重新 embedding**。
 
