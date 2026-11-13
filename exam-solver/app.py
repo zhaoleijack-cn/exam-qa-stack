@@ -204,11 +204,7 @@ def items(brief: int = 0):
 @app.get('/api/live/items')
 def live_items(brief: int = 0):
     """只读看板专用：与 /api/items 同结构，公开可读。"""
-    payload = _items_payload(bool(brief))
-    for it in payload.get('items', []):
-        # 看板不渲染全部命中：公开接口每题少传 ~12KB
-        it.pop('all_hits', None)
-    return payload
+    return _items_payload(bool(brief))
 
 
 @app.delete('/api/items/{item_id}')

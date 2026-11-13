@@ -88,6 +88,7 @@ function card(q){
       ${q.needs_review?'<span class="warn">⚠️ 建议复核</span>':''}
       ${q.reason?`<span style="color:var(--muted)"> · ${esc(q.reason)}</span>`:''}</div>
     ${ev?`<details><summary>查看依据（${q.evidence.length}）</summary>${ev}</details>`:''}
+    ${q.all_hits&&q.all_hits.length?`<details><summary>全部命中（${q.all_hits.length} 条检索结果）</summary>${q.all_hits.map(h=>`<div class="ev">[${h.n}] ${esc(h.doc)}（${h.score}）<br>${esc(h.text)}</div>`).join('')}</details>`:''}
   </div>`;
 }
 
