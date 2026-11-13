@@ -34,10 +34,14 @@ def init():
         CREATE TABLE IF NOT EXISTS items(
             id TEXT PRIMARY KEY, batch_id TEXT, image_name TEXT, image_hash TEXT,
             type TEXT, stem TEXT, options TEXT, answer TEXT, confidence REAL,
-            reason TEXT, evidence TEXT, needs_review INTEGER, seq INTEGER, created_at INTEGER);
+            reason TEXT, evidence TEXT, needs_review INTEGER, seq INTEGER, created_at INTEGER, all_hits TEXT);
         CREATE INDEX IF NOT EXISTS idx_items_batch ON items(batch_id);
         CREATE INDEX IF NOT EXISTS idx_items_hash ON items(image_hash);
         ''')
+        try:
+            c.execute('ALTER TABLE items ADD COLUMN all_hits TEXT')
+        except Exception:
+            pass
 
 
 def image_seen(h, dataset_id=''):
@@ -77,13 +81,14 @@ def save_batch(dataset, questions, hashes):
             if h and h in existing:
                 continue
             c.execute('''INSERT INTO items(id,batch_id,image_name,image_hash,type,stem,options,answer,
-                         confidence,reason,evidence,needs_review,seq,created_at)
-                         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                         confidence,reason,evidence,needs_review,seq,created_at,all_hits)
+                         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
                       (uuid.uuid4().hex[:12], bid, q.get('image', ''), h, q.get('type', ''),
                        q.get('stem', ''), json.dumps(q.get('options') or {}, ensure_ascii=False),
                        q.get('answer', ''), float(q.get('confidence') or 0), q.get('reason', ''),
                        json.dumps(q.get('evidence') or [], ensure_ascii=False),
-                       1 if q.get('needs_review') else 0, seq, now))
+                       1 if q.get('needs_review') else 0, seq, now,
+                       json.dumps(q.get('all_hits') or [], ensure_ascii=False)))
             added += 1
         if added:      # 空批次不落库，避免删空后堆一堆 0 题记录
             c.execute('INSERT INTO batches(id,dataset_id,dataset_name,created_at,images,added) '
@@ -100,6 +105,7 @@ def all_items():
         d = dict(r)
         d['options'] = json.loads(d['options'] or '{}')
         d['evidence'] = json.loads(d['evidence'] or '[]')
+        d['all_hits'] = json.loads(d['all_hits'] or '[]')
         d['needs_review'] = bool(d['needs_review'])
         d['index'] = i
         out.append(d)

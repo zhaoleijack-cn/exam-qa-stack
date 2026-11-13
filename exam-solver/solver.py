@@ -143,7 +143,7 @@ def answer_one(q, dataset, topk=10, verify_below=0.6, model_id=''):
     if not hits:
         return {'type': q.get('type', '单选'), 'stem': q.get('stem', ''),
                 'options': q.get('options') or {}, 'answer': '', 'confidence': 0.0,
-                'reason': err or '知识库没有检索到相关内容', 'evidence': [],
+                'reason': err or '知识库没有检索到相关内容', 'evidence': [], 'all_hits': [],
                 'needs_review': True, 'ms': {'total': round((time.time() - t0) * 1000)}}
 
     g = generate(q, hits, model_id=model_id)
@@ -180,6 +180,7 @@ def answer_one(q, dataset, topk=10, verify_below=0.6, model_id=''):
         'confidence': round(g['confidence'], 2), 'reason': reason,
         'evidence': [{'n': n, **{k: hits[n - 1][k] for k in ('doc', 'page', 'score')},
                       'text': hits[n - 1]['text']} for n in g['evidence']],
+        'all_hits': [{'n': i, 'doc': h.get('doc', ''), 'score': h.get('score', 0), 'text': h.get('text', '')} for i, h in enumerate(hits, 1)],
         'top_score': best, 'needs_review': needs_review,
         'ms': {'total': round((time.time() - t0) * 1000), 'gen': g['ms']},
         '_raw': g['raw'],

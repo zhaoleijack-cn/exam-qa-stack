@@ -158,7 +158,7 @@ def llm_test(m):
     return {'ok': True, 'ms': round((time.time() - t0) * 1000), 'reply': str(reply)[:60]}
 
 
-def chat(messages, temperature=0, max_tokens=600, model_id=''):
+def chat(messages, temperature=0, max_tokens=4000, model_id=''):
     if model_id:
         hit = [x for x in llm_models() if x.get('id') == model_id]
         m = hit[0] if hit else active_llm()
